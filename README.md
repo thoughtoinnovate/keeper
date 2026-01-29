@@ -1,0 +1,81 @@
+# Keeper
+
+Keeper is an encrypted CLI "second brain" that runs a local daemon so you can capture notes and tasks without re-entering your password every time.
+
+## Features
+- Encrypted vault backed by SQLCipher
+- Password + 24-word recovery code
+- Fast capture via CLI and REPL dashboard
+- Due-date timeline (ASCII + Mermaid)
+- Optional MCP server for AI tool access
+
+## Install
+```bash
+curl -fsSL https://github.com/thoughtoinnovate/keeper/raw/main/install.sh | sh
+```
+
+The installer downloads the latest release and verifies a SHA-256 checksum before installing.
+
+## Quick start
+```bash
+# Start the daemon (first run initializes vault + recovery code)
+keeper start
+
+# Capture a task
+keeper note "Fix auth bug" @work !p1 ^2026-02-01
+
+# Fetch items
+keeper get @work
+
+# Stop the daemon
+keeper stop
+```
+
+## Vaults and paths
+By default, Keeper uses:
+- `~/.keeper/vault.db`
+- `~/.keeper/keystore.json`
+
+Use `--vault` to target a different location:
+```bash
+keeper --vault /path/to/vault start
+keeper --vault /path/to/vault note "..." @work !p2
+```
+
+Notes:
+- `--vault` can be a directory or a `vault.db` file.
+- Each vault has its own socket and keystore in the vault directory.
+
+## Recovery and password changes
+- Recovery (forgot password):
+  ```bash
+  keeper recover
+  ```
+- Change password while daemon runs:
+  ```bash
+  keeper passwd
+  ```
+
+## Update keeper
+```bash
+keeper update
+keeper update --tag v0.1.0
+```
+Updates verify SHA-256 checksums before installing.
+
+## Commands
+- `keeper start|stop|status`
+- `keeper note <text...> [@bucket] [!p1|!p2|!p3] [^date]`
+- `keeper get [@bucket] [--all] [--notes]`
+- `keeper mark <id> <open|done|deleted>`
+- `keeper update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]`
+- `keeper delete <id>` / `keeper delete --all`
+- `keeper undo [id]`
+- `keeper archive`
+- `keeper dash due_timeline [--mermaid]`
+
+## MCP server (AI tools)
+The MCP server is a separate binary under `mcp/keeper-mcp`. See `MCP_AGENT_GUIDE.md` for setup and tool docs.
+
+## License
+MIT. See `LICENSE`.
