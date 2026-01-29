@@ -241,7 +241,14 @@ fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
     }
     match response {
         DaemonResponse::OkMessage(msg) => println!("{msg}"),
-        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        DaemonResponse::Error(err) => {
+            if err.contains("missing field `password`") {
+                return Err(anyhow!(
+                    "Daemon is out of date. Run `keeper stop` then `keeper start` and retry."
+                ));
+            }
+            return Err(anyhow!(err));
+        }
         _ => println!("Password updated"),
     }
     Ok(())
