@@ -90,6 +90,43 @@ impl Keystore {
         Ok((store, recovery, master_key))
     }
 
+    pub fn create_from_master_key(
+        password: &str,
+        master_key: &[u8; MASTER_KEY_LEN],
+    ) -> Result<(Self, String)> {
+        let recovery = Mnemonic::generate_in(Language::English, 24)?.to_string();
+
+        let mut salt_password = [0u8; SALT_LEN];
+        let mut salt_recovery = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt_password);
+        OsRng.fill_bytes(&mut salt_recovery);
+
+        let mut nonce_password = [0u8; NONCE_LEN];
+        let mut nonce_recovery = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_password);
+        OsRng.fill_bytes(&mut nonce_recovery);
+
+        let mut wrapped_master_password =
+            wrap_master_key(password, &salt_password, &nonce_password, master_key)?;
+        let mut wrapped_master_recovery =
+            wrap_master_key(&recovery, &salt_recovery, &nonce_recovery, master_key)?;
+
+        let store = Keystore {
+            version: VERSION,
+            salt_password: STANDARD_NO_PAD.encode(salt_password),
+            salt_recovery: STANDARD_NO_PAD.encode(salt_recovery),
+            nonce_password: STANDARD_NO_PAD.encode(nonce_password),
+            nonce_recovery: STANDARD_NO_PAD.encode(nonce_recovery),
+            wrapped_master_password: STANDARD_NO_PAD.encode(&wrapped_master_password),
+            wrapped_master_recovery: STANDARD_NO_PAD.encode(&wrapped_master_recovery),
+        };
+
+        wrapped_master_password.zeroize();
+        wrapped_master_recovery.zeroize();
+
+        Ok((store, recovery))
+    }
+
     pub fn unwrap_with_password(&self, password: &str) -> Result<[u8; MASTER_KEY_LEN]> {
         unwrap_master_key(
             password,

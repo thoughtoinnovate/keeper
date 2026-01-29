@@ -138,6 +138,16 @@ fn get_notes(world: &mut KeeperWorld, bucket: String) {
     world.run_keeper(&["get", &bucket], None);
 }
 
+#[when("I run due timeline")]
+fn run_due_timeline(world: &mut KeeperWorld) {
+    world.run_keeper(&["dash", "due_timeline"], None);
+}
+
+#[when("I run due timeline with mermaid")]
+fn run_due_timeline_mermaid(world: &mut KeeperWorld) {
+    world.run_keeper(&["dash", "due_timeline", "--mermaid"], None);
+}
+
 #[when(expr = "I run {string} with no content")]
 fn run_with_no_content(world: &mut KeeperWorld, cmd: String) {
     world.run_keeper(&[cmd.as_str()], None);

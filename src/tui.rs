@@ -2,9 +2,11 @@ use crate::client::{self, send_request};
 use crate::ipc::DaemonRequest;
 use crate::models::{Item, Priority, Status};
 use crate::paths::KeeperPaths;
-use crate::{logger, prompt, session};
+use crate::{logger, prompt, session, timeline};
 use anyhow::Result;
 use chrono::{Duration, Local};
+use clap::CommandFactory;
+use std::io::IsTerminal;
 use reedline::{
     default_emacs_keybindings, ColumnarMenu, Completer, DefaultPrompt, DefaultPromptSegment,
     Emacs, Hinter, History, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu,
@@ -47,23 +49,19 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
     println!("Vault: {}", paths.db_path.display());
     render_dashboard(paths)?;
 
-    let base_commands: Vec<String> = vec![
-        "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo", "archive",
-        "clear", "exit", "quit", "help",
-    ]
-    .into_iter()
-    .map(|s| s.to_string())
-    .collect();
+    let base_commands = build_repl_commands();
     let mut commands = base_commands.clone();
-    for topic in [
-        "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo", "archive",
-        "clear", "exit", "quit", "help",
-    ] {
+    let help_topics = build_help_topics();
+    for topic in &help_topics {
         commands.push(format!("help {topic}"));
     }
     let buckets = Arc::new(Mutex::new(load_buckets(paths)));
-    let completer = Box::new(KeeperCompleter::new(commands.clone(), buckets.clone()));
-    let hinter = Box::new(CommandHinter::new(base_commands.clone()));
+    let completer = Box::new(KeeperCompleter::new(
+        commands.clone(),
+        buckets.clone(),
+        help_topics.clone(),
+    ));
+    let hinter = Box::new(CommandHinter::new(base_commands.clone(), help_topics.clone()));
     let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
     let mut keybindings = default_emacs_keybindings();
     keybindings.add_binding(
@@ -125,24 +123,13 @@ fn handle_repl_command(
     match tokens[0].to_lowercase().as_str() {
         "help" => {
             if tokens.len() == 1 {
-                println!(
-                    "Commands: start, stop, status, note, get, mark, update, delete, undo, archive, clear, help, exit"
-                );
+                println!("Commands: {}", build_repl_commands().join(", "));
             } else {
-                match tokens[1].to_lowercase().as_str() {
-                    "start" => println!("start: prompt for password and start the daemon"),
-                    "stop" => println!("stop: shut down the daemon"),
-                    "status" => println!("status: show daemon status"),
-                    "note" => println!("note <text...> [@bucket] [!p1|p1|!p2|p2|!p3|p3] [^date]"),
-                    "get" => println!("get [@bucket] [--all|--notes]"),
-                    "mark" => println!("mark <id> <open|done|deleted>"),
-                    "update" => println!("update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]"),
-                    "delete" => println!("delete <id> | delete all (requires YES confirmation)"),
-                    "undo" => println!("undo [id]: restore last archived or a specific id"),
-                    "archive" => println!("archive: list archived notes"),
-                    "clear" => println!("clear: clear the screen and re-render dashboard"),
-                    "exit" | "quit" => println!("exit: leave the REPL"),
-                    other => println!("No help available for: {other}"),
+                let topic = tokens[1..].join(" ");
+                if let Some(help) = repl_help_for(&topic) {
+                    println!("{help}");
+                } else {
+                    println!("No help available for: {topic}");
                 }
             }
             Ok(())
@@ -200,7 +187,14 @@ fn handle_repl_command(
                 return Ok(());
             }
             let args = crate::cli::NoteArgs { content };
-            let (content, bucket, priority, due_date) = crate::sigil::parse_note_args(&args);
+            let (content, bucket, priority, due_date) =
+                match crate::sigil::parse_note_args(&args) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(());
+                    }
+                };
             if content.is_empty() {
                 eprintln!("Note content cannot be empty");
                 return Ok(());
@@ -291,7 +285,13 @@ fn handle_repl_command(
                 return Ok(());
             }
             let content_tokens: Vec<String> = tokens.iter().skip(2).cloned().collect();
-            let spec = crate::sigil::parse_update_tokens(&content_tokens);
+            let spec = match crate::sigil::parse_update_tokens(&content_tokens) {
+                Ok(spec) => spec,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return Ok(());
+                }
+            };
             if spec.content.is_none()
                 && spec.bucket.is_none()
                 && spec.priority.is_none()
@@ -315,6 +315,58 @@ fn handle_repl_command(
                 _ => println!("Updated"),
             }
             Ok(())
+        }
+        "dash" => {
+            if tokens.len() < 2 {
+                println!("Usage: dash due_timeline [--mermaid]");
+                return Ok(());
+            }
+            match tokens[1].as_str() {
+                "due_timeline" => {
+                    let mermaid = tokens.iter().any(|t| t == "--mermaid");
+                    render_due_timeline(paths, mermaid)?;
+                    Ok(())
+                }
+                _ => {
+                    println!("Unknown dash command: {}", tokens[1]);
+                    Ok(())
+                }
+            }
+        }
+        "keystore" => {
+            if tokens.len() < 2 {
+                println!("Usage: keystore rebuild");
+                return Ok(());
+            }
+            match tokens[1].as_str() {
+                "rebuild" => {
+                    if !client::daemon_running(paths) {
+                        eprintln!("Daemon not running. Start it first to rebuild keystore.");
+                        return Ok(());
+                    }
+                    let mut new_password = prompt::prompt_password_confirm()?;
+                    let response = send_request(
+                        paths,
+                        &DaemonRequest::RebuildKeystore {
+                            new_password: new_password.clone(),
+                        },
+                    )?;
+                    new_password.zeroize();
+                    match response {
+                        crate::ipc::DaemonResponse::OkRecoveryCode(code) => {
+                            println!("✅ Keystore rebuilt.");
+                            println!("🧩 New Recovery Code (store this safely):\n{code}");
+                        }
+                        crate::ipc::DaemonResponse::Error(err) => eprintln!("{err}"),
+                        _ => println!("Unexpected response"),
+                    }
+                    Ok(())
+                }
+                _ => {
+                    println!("Unknown keystore command: {}", tokens[1]);
+                    Ok(())
+                }
+            }
         }
         "delete" => {
             if tokens.len() < 2 {
@@ -487,14 +539,7 @@ struct CommandHinter {
 }
 
 impl CommandHinter {
-    fn new(commands: Vec<String>) -> Self {
-        let help_topics = vec![
-            "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo",
-            "archive", "clear", "exit", "quit", "help",
-        ]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect();
+    fn new(commands: Vec<String>, help_topics: Vec<String>) -> Self {
         Self {
             commands,
             help_topics,
@@ -629,6 +674,16 @@ fn template_for_command(cmd: &str, tokens: &[String], line: &str) -> String {
                 hint.push_str(" <id> done");
             }
         }
+        "dash" => {
+            if tokens.len() == 1 {
+                hint.push_str(" due_timeline");
+            }
+        }
+        "keystore" => {
+            if tokens.len() == 1 {
+                hint.push_str(" rebuild");
+            }
+        }
         "delete" => {
             if tokens.len() == 1 {
                 hint.push_str(" <id>|all");
@@ -684,11 +739,16 @@ fn is_in_quotes(line: &str) -> bool {
 struct KeeperCompleter {
     commands: Vec<String>,
     buckets: Arc<Mutex<Vec<String>>>,
+    help_topics: Vec<String>,
 }
 
 impl KeeperCompleter {
-    fn new(commands: Vec<String>, buckets: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { commands, buckets }
+    fn new(commands: Vec<String>, buckets: Arc<Mutex<Vec<String>>>, help_topics: Vec<String>) -> Self {
+        Self {
+            commands,
+            buckets,
+            help_topics,
+        }
     }
 }
 
@@ -713,7 +773,7 @@ impl Completer for KeeperCompleter {
         }
 
         if cmd == "help" {
-            let topics = self.help_topics();
+            let topics = self.help_topics.clone();
             if tokens.len() == 1 && ends_with_space {
                 return suggest_from_candidates(&topics, "", pos, pos);
             }
@@ -728,22 +788,14 @@ impl Completer for KeeperCompleter {
             "get" => self.complete_get(&tokens, ends_with_space, pos),
             "mark" => self.complete_mark(&tokens, ends_with_space, pos),
             "delete" => self.complete_delete(&tokens, ends_with_space, pos),
+            "dash" => self.complete_dash(&tokens, ends_with_space, pos),
+            "keystore" => self.complete_keystore(&tokens, ends_with_space, pos),
             _ => Vec::new(),
         }
     }
 }
 
 impl KeeperCompleter {
-    fn help_topics(&self) -> Vec<String> {
-        vec![
-            "start", "stop", "status", "note", "get", "mark", "delete", "undo", "archive",
-            "clear", "exit", "quit", "help",
-        ]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect()
-    }
-
     fn complete_note(
         &self,
         tokens: &[Token],
@@ -846,6 +898,61 @@ impl KeeperCompleter {
         let span_start = current.map(|t| t.start).unwrap_or(pos);
         suggest_from_candidates(&["all"], current_text, span_start, pos)
     }
+
+    fn complete_dash(
+        &self,
+        tokens: &[Token],
+        ends_with_space: bool,
+        pos: usize,
+    ) -> Vec<Suggestion> {
+        let current = if ends_with_space { None } else { tokens.last() };
+        let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
+        let span_start = current.map(|t| t.start).unwrap_or(pos);
+        let subcommands = ["due_timeline"];
+
+        if tokens.len() == 1 {
+            if ends_with_space {
+                return suggest_from_candidates(&subcommands, "", pos, pos);
+            }
+            return Vec::new();
+        }
+
+        if tokens.len() == 2 {
+            if current_text.starts_with('-') {
+                return suggest_from_candidates(&["--mermaid"], current_text, span_start, pos);
+            }
+            return suggest_from_candidates(&subcommands, current_text, span_start, pos);
+        }
+
+        if tokens.get(1).map(|t| t.text.as_str()) == Some("due_timeline") {
+            return suggest_from_candidates(&["--mermaid"], current_text, span_start, pos);
+        }
+
+        Vec::new()
+    }
+
+    fn complete_keystore(
+        &self,
+        tokens: &[Token],
+        ends_with_space: bool,
+        pos: usize,
+    ) -> Vec<Suggestion> {
+        let current = if ends_with_space { None } else { tokens.last() };
+        let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
+        let span_start = current.map(|t| t.start).unwrap_or(pos);
+        let subcommands = ["rebuild"];
+
+        if tokens.len() == 1 {
+            if ends_with_space {
+                return suggest_from_candidates(&subcommands, "", pos, pos);
+            }
+            return Vec::new();
+        }
+        if tokens.len() == 2 {
+            return suggest_from_candidates(&subcommands, current_text, span_start, pos);
+        }
+        Vec::new()
+    }
 }
 
 fn suggest_from_candidates(
@@ -938,6 +1045,67 @@ fn tokenize_with_spans(input: &str) -> Vec<Token> {
         });
     }
     tokens
+}
+
+fn build_repl_commands() -> Vec<String> {
+    let mut cmds = Vec::new();
+    let mut root = crate::cli::Cli::command();
+    for sub in root.get_subcommands() {
+        if sub.is_hide_set() {
+            continue;
+        }
+        cmds.push(sub.get_name().to_string());
+    }
+    cmds.extend(["clear", "exit", "quit", "help"].iter().map(|s| s.to_string()));
+    cmds
+}
+
+fn build_help_topics() -> Vec<String> {
+    let mut topics = build_repl_commands();
+    let mut root = crate::cli::Cli::command();
+    for sub in root.get_subcommands_mut() {
+        if sub.is_hide_set() {
+            continue;
+        }
+        let name = sub.get_name().to_string();
+        for sub2 in sub.get_subcommands() {
+            if sub2.is_hide_set() {
+                continue;
+            }
+            topics.push(format!("{name} {}", sub2.get_name()));
+        }
+    }
+    topics.sort();
+    topics.dedup();
+    topics
+}
+
+fn repl_help_for(topic: &str) -> Option<String> {
+    match topic {
+        "clear" => return Some("clear: clear the screen and re-render dashboard".to_string()),
+        "exit" | "quit" => return Some("exit: leave the REPL".to_string()),
+        "help" => return Some("help [command]: show help".to_string()),
+        _ => {}
+    }
+
+    if let Some(help) = clap_help_for(topic) {
+        return Some(help.trim().to_string());
+    }
+
+    None
+}
+
+fn clap_help_for(topic: &str) -> Option<String> {
+    let mut root = crate::cli::Cli::command();
+    let mut parts = topic.split_whitespace();
+    let first = parts.next()?;
+    let mut cmd = root.find_subcommand_mut(first)?;
+    for part in parts {
+        cmd = cmd.find_subcommand_mut(part)?;
+    }
+    let mut buf = Vec::new();
+    cmd.write_long_help(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).to_string())
 }
 
 fn build_date_candidates() -> Vec<String> {
@@ -1111,4 +1279,71 @@ fn fetch_overdue_counts(paths: &KeeperPaths) -> Result<(usize, usize, usize, usi
     }
 
     Ok((p1, p2, p3, none))
+}
+
+fn render_due_timeline(paths: &KeeperPaths, mermaid: bool) -> Result<()> {
+    let today = Local::now().date_naive();
+    let cutoff = today + Duration::days(15);
+    let response = send_request(
+        paths,
+        &DaemonRequest::GetItems {
+            bucket_filter: None,
+            priority_filter: None,
+            status_filter: Some(Status::Open),
+            date_cutoff: Some(cutoff),
+            include_notes: false,
+            notes_only: false,
+        },
+    )?;
+
+    let items = match response {
+        crate::ipc::DaemonResponse::OkItems(items) => items,
+        _ => Vec::new(),
+    };
+
+    let mut overdue = Vec::new();
+    let mut upcoming = Vec::new();
+
+    for item in items {
+        if let Some(due) = item.due_date {
+            if due < today {
+                overdue.push(item);
+            } else if due <= cutoff {
+                upcoming.push(item);
+            }
+        }
+    }
+
+    let mermaid_code = timeline::build_mermaid_due_timeline(&upcoming, cutoff)?;
+    if mermaid {
+        println!("{mermaid_code}");
+        return Ok(());
+    }
+    let link = timeline::mermaid_live_edit_url(&mermaid_code)?;
+    let link_label = if std::io::stdout().is_terminal() {
+        timeline::format_terminal_hyperlink("timeline", &link)
+    } else {
+        "timeline".to_string()
+    };
+
+    println!("🧭 DUE TIMELINE (Next 15 Days)");
+    if overdue.is_empty() {
+        println!("Overdue: (none)");
+    } else {
+        println!("Overdue:");
+        overdue.sort_by(|a, b| a.due_date.cmp(&b.due_date).then(a.id.cmp(&b.id)));
+        for item in overdue {
+            let due = timeline::format_date(item.due_date);
+            println!(
+                " - [{}] {} ({}) due {}",
+                item.priority, item.content, item.bucket, due
+            );
+        }
+    }
+    println!();
+    let ascii = timeline::mermaid_timeline_to_ascii(&mermaid_code);
+    println!("{ascii}");
+    println!("Timeline: {link_label}");
+    println!("Timeline URL: {link}");
+    Ok(())
 }

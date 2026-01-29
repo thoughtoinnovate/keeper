@@ -28,6 +28,8 @@ pub enum Commands {
     Get(GetArgs),
     Mark { id: i64, status: String },
     Update(UpdateArgs),
+    Dash(DashArgs),
+    Keystore(KeystoreArgs),
     Delete(DeleteArgs),
     Undo(UndoArgs),
     Archive,
@@ -82,4 +84,29 @@ pub struct UpdateArgs {
 pub struct RecoverArgs {
     #[arg(long)]
     pub code: Option<String>,
+}
+
+#[derive(Args)]
+pub struct DashArgs {
+    #[command(subcommand)]
+    pub command: DashCommands,
+}
+
+#[derive(Subcommand)]
+pub enum DashCommands {
+    DueTimeline {
+        #[arg(long)]
+        mermaid: bool,
+    },
+}
+
+#[derive(Args)]
+pub struct KeystoreArgs {
+    #[command(subcommand)]
+    pub command: KeystoreCommands,
+}
+
+#[derive(Subcommand)]
+pub enum KeystoreCommands {
+    Rebuild,
 }

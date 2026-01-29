@@ -78,6 +78,8 @@ You must enter the **current password** and then set a new one.
 - `keeper start` — unlocks/starts the daemon (auto‑init on first run)
 - `keeper stop` — stops the daemon and wipes key from RAM
 - `keeper status` — shows daemon status
+- `keeper dash due_timeline [--mermaid]` — shows due‑date timeline for the next 15 days (ASCII by default, Mermaid code with `--mermaid`)
+  - When showing ASCII, Keeper also prints a Mermaid Live link you can click/copy.
 
 ### Capture and Retrieval
 - `keeper note <text...> [@bucket] [!p1|!p2|!p3] [^date]`
@@ -97,9 +99,54 @@ You must enter the **current password** and then set a new one.
 ### Security
 - `keeper passwd` — change password (requires current password)
 - `keeper recover` — reset password using recovery code
+- `keeper keystore rebuild` — rebuild keystore while daemon is running (prints a new recovery code)
 
 ### REPL / Dashboard
 Run `keeper` with no arguments to enter the interactive dashboard (REPL).
+
+## MCP Server (AI Tools)
+Keeper can be exposed as MCP tools via the **separate** `keeper-mcp` binary.
+
+### Option A: Build locally
+```bash
+cd mcp/keeper-mcp
+cargo build --release
+```
+Binary:
+```
+mcp/keeper-mcp/target/release/keeper-mcp
+```
+
+### Option B: Download GitHub artifact
+We publish artifacts on tags like `mcp-v0.1.0`.
+```bash
+git tag mcp-v0.1.0
+git push origin mcp-v0.1.0
+```
+Then download the artifact from the GitHub Actions run.
+
+### MCP config (example)
+```json
+{
+  "server": "keeper",
+  "command": "/path/to/keeper-mcp",
+  "env": {
+    "KEEPER_VAULT": "/home/user/.keeper",
+    "KEEPER_BIN": "/path/to/keeper",
+    "KEEPER_READONLY": "false",
+    "KEEPER_ALLOW_PASSWORD_OPS": "false",
+    "KEEPER_AUTO_START": "true"
+  }
+}
+```
+
+Notes:
+- If the daemon is already running, set `KEEPER_AUTO_START=false`.
+- If `keeper` is in PATH, you can omit `KEEPER_BIN`.
+- Docs are exposed via MCP resource `keeper://docs`.
+ - The MCP server is non‑interactive and will **not** prompt for passwords.
+   - If `KEEPER_AUTO_START=true`, you must provide `KEEPER_PASSWORD`.
+   - For a new vault, the server will submit the password twice (create + confirm).
 
 ## Sigil Syntax (Quick Capture)
 Use sigils anywhere in note text:

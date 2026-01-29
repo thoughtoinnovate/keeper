@@ -186,6 +186,18 @@ fn handle_connection(
             new_password.zeroize();
             response
         }
+        DaemonRequest::RebuildKeystore { new_password } => {
+            let mut new_password = new_password;
+            let response = match Keystore::create_from_master_key(&new_password, master_key) {
+                Ok((keystore, recovery)) => match keystore.save(paths.keystore_path()) {
+                    Ok(()) => DaemonResponse::OkRecoveryCode(recovery),
+                    Err(err) => DaemonResponse::Error(format!("Failed to save keystore: {err}")),
+                },
+                Err(err) => DaemonResponse::Error(format!("Failed to rebuild keystore: {err}")),
+            };
+            new_password.zeroize();
+            response
+        }
         DaemonRequest::GetDashboardStats => match db.stats() {
             Ok((open, done_today, p1)) => DaemonResponse::OkStats {
                 open,

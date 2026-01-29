@@ -31,6 +31,7 @@ pub enum DaemonRequest {
         current_password: String,
         new_password: String,
     },
+    RebuildKeystore { new_password: String },
     GetDashboardStats,
     ArchiveAll,
     Undo { id: Option<i64> },
@@ -43,5 +44,6 @@ pub enum DaemonResponse {
     OkItems(Vec<Item>),
     // Create a specific struct for dash stats if needed
     OkStats { open: i64, done_today: i64, p1: i64 },
+    OkRecoveryCode(String),
     Error(String),
 }

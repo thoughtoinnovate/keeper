@@ -5,6 +5,7 @@ mod db;
 mod formatting;
 mod ipc;
 mod keystore;
+mod timeline;
 mod logger;
 mod models;
 mod paths;
@@ -18,6 +19,7 @@ use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
 use clap::Parser;
 use std::io;
+use std::io::IsTerminal;
 use zeroize::Zeroize;
 
 use crate::cli::{Cli, Commands};
@@ -46,6 +48,8 @@ fn run() -> Result<()> {
         Some(Commands::Get(args)) => cmd_get(&paths, args),
         Some(Commands::Mark { id, status }) => cmd_mark(&paths, id, status),
         Some(Commands::Update(args)) => cmd_update(&paths, args),
+        Some(Commands::Dash(args)) => cmd_dash(&paths, args),
+        Some(Commands::Keystore(args)) => cmd_keystore(&paths, args),
         Some(Commands::Delete(args)) => cmd_delete(&paths, args),
         Some(Commands::Undo(args)) => cmd_undo(&paths, args),
         Some(Commands::Archive) => cmd_archive(&paths),
@@ -107,7 +111,7 @@ fn cmd_status(paths: &KeeperPaths) -> Result<()> {
 }
 
 fn cmd_note(paths: &KeeperPaths, args: cli::NoteArgs) -> Result<()> {
-    let (content, bucket, priority, due_date) = sigil::parse_note_args(&args);
+    let (content, bucket, priority, due_date) = sigil::parse_note_args(&args)?;
     if content.is_empty() {
         return Err(anyhow!("Note content cannot be empty"));
     }
@@ -163,7 +167,7 @@ fn cmd_mark(paths: &KeeperPaths, id: i64, status: String) -> Result<()> {
 }
 
 fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
-    let spec = sigil::parse_update_args(&args);
+    let spec = sigil::parse_update_args(&args)?;
     if spec.content.is_none()
         && spec.bucket.is_none()
         && spec.priority.is_none()
@@ -341,6 +345,110 @@ fn cmd_daemon(paths: &KeeperPaths) -> Result<()> {
             Err(err)
         }
     }
+}
+
+fn cmd_dash(paths: &KeeperPaths, args: cli::DashArgs) -> Result<()> {
+    match args.command {
+        cli::DashCommands::DueTimeline { mermaid } => cmd_dash_due_timeline(paths, mermaid),
+    }
+}
+
+fn cmd_keystore(paths: &KeeperPaths, args: cli::KeystoreArgs) -> Result<()> {
+    match args.command {
+        cli::KeystoreCommands::Rebuild => cmd_keystore_rebuild(paths),
+    }
+}
+
+fn cmd_keystore_rebuild(paths: &KeeperPaths) -> Result<()> {
+    if !client::daemon_running(paths) {
+        return Err(anyhow!(
+            "Daemon not running. Start it first to rebuild keystore."
+        ));
+    }
+    let mut new_password = prompt::prompt_password_confirm()?;
+    let response = client::send_request(
+        paths,
+        &DaemonRequest::RebuildKeystore {
+            new_password: new_password.clone(),
+        },
+    )?;
+    new_password.zeroize();
+    match response {
+        DaemonResponse::OkRecoveryCode(code) => {
+            println!("✅ Keystore rebuilt.");
+            println!("🧩 New Recovery Code (store this safely):\n{code}");
+            Ok(())
+        }
+        DaemonResponse::Error(err) => Err(anyhow!(err)),
+        _ => Err(anyhow!("Unexpected response")),
+    }
+}
+
+fn cmd_dash_due_timeline(paths: &KeeperPaths, mermaid: bool) -> Result<()> {
+    let today = chrono::Local::now().date_naive();
+    let cutoff = today + chrono::Duration::days(15);
+    let response = client::send_request(
+        paths,
+        &DaemonRequest::GetItems {
+            bucket_filter: None,
+            priority_filter: None,
+            status_filter: Some(models::Status::Open),
+            date_cutoff: Some(cutoff),
+            include_notes: false,
+            notes_only: false,
+        },
+    )?;
+
+    let items = match response {
+        DaemonResponse::OkItems(items) => items,
+        _ => Vec::new(),
+    };
+
+    let mut overdue = Vec::new();
+    let mut upcoming = Vec::new();
+
+    for item in items {
+        if let Some(due) = item.due_date {
+            if due < today {
+                overdue.push(item);
+            } else if due <= cutoff {
+                upcoming.push(item);
+            }
+        }
+    }
+
+    let mermaid_code = timeline::build_mermaid_due_timeline(&upcoming, cutoff)?;
+    if mermaid {
+        println!("{mermaid_code}");
+        return Ok(());
+    }
+    let link = timeline::mermaid_live_edit_url(&mermaid_code)?;
+    let link_label = if std::io::stdout().is_terminal() {
+        timeline::format_terminal_hyperlink("timeline", &link)
+    } else {
+        "timeline".to_string()
+    };
+
+    println!("🧭 DUE TIMELINE (Next 15 Days)");
+    if overdue.is_empty() {
+        println!("Overdue: (none)");
+    } else {
+        println!("Overdue:");
+        overdue.sort_by(|a, b| a.due_date.cmp(&b.due_date).then(a.id.cmp(&b.id)));
+        for item in overdue {
+            let due = timeline::format_date(item.due_date);
+            println!(
+                " - [{}] {} ({}) due {}",
+                item.priority, item.content, item.bucket, due
+            );
+        }
+    }
+    println!();
+    let ascii = timeline::mermaid_timeline_to_ascii(&mermaid_code);
+    println!("{ascii}");
+    println!("Timeline: {link_label}");
+    println!("Timeline URL: {link}");
+    Ok(())
 }
 
 fn confirm(prompt: &str) -> Result<bool> {

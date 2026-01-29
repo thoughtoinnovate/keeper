@@ -1,8 +1,11 @@
 use crate::cli::{NoteArgs, UpdateArgs};
 use crate::models::Priority;
+use anyhow::{anyhow, Result};
 use chrono::{Duration, Local, NaiveDate};
 
-pub fn parse_note_args(args: &NoteArgs) -> (String, String, Priority, Option<NaiveDate>) {
+pub fn parse_note_args(
+    args: &NoteArgs,
+) -> Result<(String, String, Priority, Option<NaiveDate>)> {
     let mut bucket = "@inbox".to_string();
     let mut priority = Priority::None;
     let mut due_date: Option<NaiveDate> = None;
@@ -19,18 +22,18 @@ pub fn parse_note_args(args: &NoteArgs) -> (String, String, Priority, Option<Nai
             continue;
         }
 
-        if let Some(date_result) = parse_due_date_token(token) {
-            if let Some(date) = date_result {
+        if token.starts_with('^') {
+            if let Some(date) = parse_due_date_token_strict(token)? {
                 due_date = Some(date);
-                continue;
             }
+            continue;
         }
 
         content_parts.push(token.clone());
     }
 
     let content = content_parts.join(" ").trim().to_string();
-    (content, bucket, priority, due_date)
+    Ok((content, bucket, priority, due_date))
 }
 
 pub struct UpdateSpec {
@@ -40,11 +43,11 @@ pub struct UpdateSpec {
     pub due_date: Option<Option<NaiveDate>>,
 }
 
-pub fn parse_update_args(args: &UpdateArgs) -> UpdateSpec {
+pub fn parse_update_args(args: &UpdateArgs) -> Result<UpdateSpec> {
     parse_update_tokens(&args.content)
 }
 
-pub fn parse_update_tokens(tokens: &[String]) -> UpdateSpec {
+pub fn parse_update_tokens(tokens: &[String]) -> Result<UpdateSpec> {
     let mut bucket: Option<String> = None;
     let mut priority: Option<Priority> = None;
     let mut due_date: Option<Option<NaiveDate>> = None;
@@ -61,8 +64,10 @@ pub fn parse_update_tokens(tokens: &[String]) -> UpdateSpec {
             continue;
         }
 
-        if let Some(date_result) = parse_update_due_date_token(token) {
-            due_date = Some(date_result);
+        if token.starts_with('^') {
+            if let Some(date_result) = parse_update_due_date_token_strict(token)? {
+                due_date = Some(date_result);
+            }
             continue;
         }
 
@@ -75,12 +80,12 @@ pub fn parse_update_tokens(tokens: &[String]) -> UpdateSpec {
         Some(content_parts.join(" ").trim().to_string())
     };
 
-    UpdateSpec {
+    Ok(UpdateSpec {
         content,
         bucket,
         priority,
         due_date,
-    }
+    })
 }
 
 fn parse_bucket(token: &str) -> Option<String> {
@@ -99,9 +104,9 @@ fn parse_priority(token: &str) -> Option<Priority> {
     }
 }
 
-fn parse_due_date_token(token: &str) -> Option<Option<NaiveDate>> {
+fn parse_due_date_token_strict(token: &str) -> Result<Option<NaiveDate>> {
     if !token.starts_with('^') || token.len() <= 1 {
-        return None;
+        return Ok(None);
     }
 
     let raw = &token[1..];
@@ -113,7 +118,7 @@ fn parse_due_date_token(token: &str) -> Option<Option<NaiveDate>> {
         _ => NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok(),
     };
 
-    Some(parsed)
+    parsed.ok_or_else(|| anyhow!("Invalid due date: {raw}")).map(Some)
 }
 
 fn parse_update_priority(token: &str) -> Option<Priority> {
@@ -126,16 +131,17 @@ fn parse_update_priority(token: &str) -> Option<Priority> {
     }
 }
 
-fn parse_update_due_date_token(token: &str) -> Option<Option<NaiveDate>> {
+fn parse_update_due_date_token_strict(token: &str) -> Result<Option<Option<NaiveDate>>> {
     if !token.starts_with('^') || token.len() <= 1 {
-        return None;
+        return Ok(None);
     }
     let raw = &token[1..];
     let normalized = raw.to_lowercase();
     if normalized == "none" || normalized == "clear" {
-        return Some(None);
+        return Ok(Some(None));
     }
-    parse_due_date_token(token).and_then(|parsed| parsed.map(Some))
+    let date = parse_due_date_token_strict(token)?;
+    Ok(date.map(Some))
 }
 
 #[cfg(test)]
@@ -150,7 +156,7 @@ mod tests {
         let args = NoteArgs {
             content: vec!["just".into(), "a".into(), "note".into()],
         };
-        let (content, bucket, priority, due_date) = parse_note_args(&args);
+        let (content, bucket, priority, due_date) = parse_note_args(&args).unwrap();
         assert_eq!(content, "just a note");
         assert_eq!(bucket, "@inbox");
         assert_eq!(priority, Priority::None);
@@ -169,7 +175,7 @@ mod tests {
                 "^2025-12-31".into(),
             ],
         };
-        let (content, bucket, priority, due_date) = parse_note_args(&args);
+        let (content, bucket, priority, due_date) = parse_note_args(&args).unwrap();
         assert_eq!(content, "Fix auth bug");
         assert_eq!(bucket, "@work");
         assert_eq!(priority, Priority::P1_Urgent);
@@ -182,24 +188,23 @@ mod tests {
         let args_today = NoteArgs {
             content: vec!["Task".into(), "^today".into()],
         };
-        let (_, _, _, due_today) = parse_note_args(&args_today);
+        let (_, _, _, due_today) = parse_note_args(&args_today).unwrap();
         assert_eq!(due_today, Some(today));
 
         let args_tomorrow = NoteArgs {
             content: vec!["Task".into(), "^tomorrow".into()],
         };
-        let (_, _, _, due_tomorrow) = parse_note_args(&args_tomorrow);
+        let (_, _, _, due_tomorrow) = parse_note_args(&args_tomorrow).unwrap();
         assert_eq!(due_tomorrow, Some(today + Duration::days(1)));
     }
 
     #[test]
-    fn invalid_due_date_stays_in_content() {
+    fn invalid_due_date_errors() {
         let args = NoteArgs {
             content: vec!["Review".into(), "^notadate".into()],
         };
-        let (content, _, _, due_date) = parse_note_args(&args);
-        assert_eq!(content, "Review ^notadate");
-        assert_eq!(due_date, None);
+        let err = parse_note_args(&args).unwrap_err();
+        assert!(err.to_string().contains("Invalid due date"));
     }
 
     #[test]
@@ -207,7 +212,7 @@ mod tests {
         let args = NoteArgs {
             content: vec!["Plan".into(), "@home".into(), "@work".into(), "!p2".into(), "!p3".into()],
         };
-        let (content, bucket, priority, _) = parse_note_args(&args);
+        let (content, bucket, priority, _) = parse_note_args(&args).unwrap();
         assert_eq!(content, "Plan");
         assert_eq!(bucket, "@work");
         assert_eq!(priority, Priority::P3_Task);
@@ -218,7 +223,7 @@ mod tests {
         let args = NoteArgs {
             content: vec!["Task".into(), "p1".into()],
         };
-        let (_, _, priority, _) = parse_note_args(&args);
+        let (_, _, priority, _) = parse_note_args(&args).unwrap();
         assert_eq!(priority, Priority::P1_Urgent);
     }
 }

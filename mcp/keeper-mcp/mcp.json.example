@@ -1,0 +1,11 @@
+{
+  "server": "keeper",
+  "command": "/path/to/keeper-mcp/target/release/keeper-mcp",
+  "env": {
+    "KEEPER_VAULT": "/home/user/.keeper",
+    "KEEPER_PASSWORD": "env:KEEPER_PASSWORD",
+    "KEEPER_READONLY": "false",
+    "KEEPER_ALLOW_PASSWORD_OPS": "false",
+    "KEEPER_AUTO_START": "true"
+  }
+}

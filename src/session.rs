@@ -15,6 +15,11 @@ pub struct UnlockOutcome {
 
 pub fn unlock_or_init_master_key(paths: &KeeperPaths) -> Result<UnlockOutcome> {
     if !paths.keystore_path().exists() {
+        if paths.db_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Keystore missing but vault exists. If the daemon is running, run `keeper keystore rebuild`. Otherwise the vault is unrecoverable."
+            ));
+        }
         let mut password = prompt::prompt_password_confirm()?;
         let (keystore, recovery_code, master_key) = Keystore::create_new(&password)?;
         keystore.save(paths.keystore_path())?;
