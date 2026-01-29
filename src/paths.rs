@@ -14,8 +14,13 @@ pub struct KeeperPaths {
 impl KeeperPaths {
     pub fn new(vault: Option<&Path>) -> Result<Self> {
         let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("Unable to resolve home directory"))?;
-        let vault_arg = vault.map(|path| path.to_path_buf());
-        let (base_dir, db_path) = match vault {
+        let resolved_vault = match vault {
+            Some(path) if path.is_absolute() => Some(path.to_path_buf()),
+            Some(path) => Some(std::env::current_dir()?.join(path)),
+            None => None,
+        };
+        let vault_arg = resolved_vault.clone();
+        let (base_dir, db_path) = match resolved_vault.as_deref() {
             None => {
                 let base = base_dirs.home_dir().join(".keeper");
                 (base.clone(), base.join("vault.db"))
