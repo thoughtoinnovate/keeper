@@ -47,9 +47,9 @@ jobs:
             C:\vcpkg\bootstrap-vcpkg.bat
           }
           C:\vcpkg\vcpkg.exe install "openssl:$triplet"
-          "OPENSSL_DIR=C:\vcpkg\installed\$triplet" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "OPENSSL_LIB_DIR=C:\vcpkg\installed\$triplet\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\$triplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_DIR=C:\vcpkg\installed\$triplet" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_LIB_DIR=C:\vcpkg\installed\$triplet\lib" -Encoding utf8
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\$triplet\include" -Encoding utf8
       - name: Build and Upload Asset
         uses: taiki-e/upload-rust-binary-action@v1
         with:
