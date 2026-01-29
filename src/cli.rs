@@ -27,6 +27,7 @@ pub enum Commands {
     Note(NoteArgs),
     Get(GetArgs),
     Mark { id: i64, status: String },
+    Update(UpdateArgs),
     Delete(DeleteArgs),
     Undo(UndoArgs),
     Archive,
@@ -68,6 +69,13 @@ pub struct DeleteArgs {
 #[derive(Args)]
 pub struct UndoArgs {
     pub id: Option<i64>,
+}
+
+#[derive(Args)]
+pub struct UpdateArgs {
+    pub id: i64,
+    #[arg(trailing_var_arg = true)]
+    pub content: Vec<String>,
 }
 
 #[derive(Args)]

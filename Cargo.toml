@@ -36,3 +36,9 @@ assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.8"
 insta = { version = "1.34", features = ["yaml"] }
+cucumber = "0.21"
+futures = "0.3"
+
+[[test]]
+name = "bdd"
+harness = false

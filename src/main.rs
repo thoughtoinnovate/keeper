@@ -45,6 +45,7 @@ fn run() -> Result<()> {
         Some(Commands::Note(args)) => cmd_note(&paths, args),
         Some(Commands::Get(args)) => cmd_get(&paths, args),
         Some(Commands::Mark { id, status }) => cmd_mark(&paths, id, status),
+        Some(Commands::Update(args)) => cmd_update(&paths, args),
         Some(Commands::Delete(args)) => cmd_delete(&paths, args),
         Some(Commands::Undo(args)) => cmd_undo(&paths, args),
         Some(Commands::Archive) => cmd_archive(&paths),
@@ -152,6 +153,37 @@ fn cmd_get(paths: &KeeperPaths, args: cli::GetArgs) -> Result<()> {
 fn cmd_mark(paths: &KeeperPaths, id: i64, status: String) -> Result<()> {
     let status = daemon::parse_status(&status).ok_or_else(|| anyhow!("Invalid status"))?;
     let request = DaemonRequest::UpdateStatus { id, new_status: status };
+    let response = client::send_request(paths, &request)?;
+    match response {
+        DaemonResponse::OkMessage(msg) => println!("{msg}"),
+        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        _ => println!("Updated"),
+    }
+    Ok(())
+}
+
+fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
+    let spec = sigil::parse_update_args(&args);
+    if spec.content.is_none()
+        && spec.bucket.is_none()
+        && spec.priority.is_none()
+        && spec.due_date.is_none()
+    {
+        return Err(anyhow!("No updates provided"));
+    }
+    if let Some(ref content) = spec.content {
+        if content.trim().is_empty() {
+            return Err(anyhow!("Note content cannot be empty"));
+        }
+    }
+    let request = DaemonRequest::UpdateItem {
+        id: args.id,
+        bucket: spec.bucket,
+        content: spec.content,
+        priority: spec.priority,
+        due_date: spec.due_date.flatten(),
+        clear_due_date: matches!(spec.due_date, Some(None)),
+    };
     let response = client::send_request(paths, &request)?;
     match response {
         DaemonResponse::OkMessage(msg) => println!("{msg}"),

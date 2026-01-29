@@ -19,6 +19,14 @@ pub enum DaemonRequest {
         notes_only: bool,
     },
     UpdateStatus { id: i64, new_status: Status },
+    UpdateItem {
+        id: i64,
+        bucket: Option<String>,
+        content: Option<String>,
+        priority: Option<Priority>,
+        due_date: Option<NaiveDate>,
+        clear_due_date: bool,
+    },
     RotatePassword {
         current_password: String,
         new_password: String,

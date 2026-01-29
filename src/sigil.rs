@@ -1,4 +1,4 @@
-use crate::cli::NoteArgs;
+use crate::cli::{NoteArgs, UpdateArgs};
 use crate::models::Priority;
 use chrono::{Duration, Local, NaiveDate};
 
@@ -33,6 +33,56 @@ pub fn parse_note_args(args: &NoteArgs) -> (String, String, Priority, Option<Nai
     (content, bucket, priority, due_date)
 }
 
+pub struct UpdateSpec {
+    pub content: Option<String>,
+    pub bucket: Option<String>,
+    pub priority: Option<Priority>,
+    pub due_date: Option<Option<NaiveDate>>,
+}
+
+pub fn parse_update_args(args: &UpdateArgs) -> UpdateSpec {
+    parse_update_tokens(&args.content)
+}
+
+pub fn parse_update_tokens(tokens: &[String]) -> UpdateSpec {
+    let mut bucket: Option<String> = None;
+    let mut priority: Option<Priority> = None;
+    let mut due_date: Option<Option<NaiveDate>> = None;
+    let mut content_parts: Vec<String> = Vec::new();
+
+    for token in tokens {
+        if let Some(new_bucket) = parse_bucket(token) {
+            bucket = Some(new_bucket);
+            continue;
+        }
+
+        if let Some(new_priority) = parse_update_priority(token) {
+            priority = Some(new_priority);
+            continue;
+        }
+
+        if let Some(date_result) = parse_update_due_date_token(token) {
+            due_date = Some(date_result);
+            continue;
+        }
+
+        content_parts.push(token.clone());
+    }
+
+    let content = if content_parts.is_empty() {
+        None
+    } else {
+        Some(content_parts.join(" ").trim().to_string())
+    };
+
+    UpdateSpec {
+        content,
+        bucket,
+        priority,
+        due_date,
+    }
+}
+
 fn parse_bucket(token: &str) -> Option<String> {
     if token.starts_with('@') && token.len() > 1 {
         return Some(token.to_string());
@@ -64,6 +114,28 @@ fn parse_due_date_token(token: &str) -> Option<Option<NaiveDate>> {
     };
 
     Some(parsed)
+}
+
+fn parse_update_priority(token: &str) -> Option<Priority> {
+    match token.to_lowercase().as_str() {
+        "!p1" | "p1" => Some(Priority::P1_Urgent),
+        "!p2" | "p2" => Some(Priority::P2_Important),
+        "!p3" | "p3" => Some(Priority::P3_Task),
+        "!none" | "none" => Some(Priority::None),
+        _ => None,
+    }
+}
+
+fn parse_update_due_date_token(token: &str) -> Option<Option<NaiveDate>> {
+    if !token.starts_with('^') || token.len() <= 1 {
+        return None;
+    }
+    let raw = &token[1..];
+    let normalized = raw.to_lowercase();
+    if normalized == "none" || normalized == "clear" {
+        return Some(None);
+    }
+    parse_due_date_token(token).and_then(|parsed| parsed.map(Some))
 }
 
 #[cfg(test)]

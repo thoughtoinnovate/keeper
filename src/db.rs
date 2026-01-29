@@ -117,6 +117,55 @@ impl Db {
         Ok(updated > 0)
     }
 
+    pub fn update_item(
+        &self,
+        id: i64,
+        bucket: Option<String>,
+        content: Option<String>,
+        priority: Option<Priority>,
+        due_date: Option<Option<NaiveDate>>,
+    ) -> Result<bool> {
+        let mut sets: Vec<String> = Vec::new();
+        let mut params: Vec<Value> = Vec::new();
+
+        if let Some(bucket) = bucket {
+            sets.push("bucket = ?".to_string());
+            params.push(Value::from(bucket));
+        }
+        if let Some(content) = content {
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                return Err(anyhow::anyhow!("Note content cannot be empty"));
+            }
+            sets.push("content = ?".to_string());
+            params.push(Value::from(trimmed.to_string()));
+        }
+        if let Some(priority) = priority {
+            sets.push("priority = ?".to_string());
+            params.push(Value::from(priority.as_str().to_string()));
+        }
+        if let Some(due_date) = due_date {
+            sets.push("due_date = ?".to_string());
+            match due_date {
+                Some(date) => params.push(Value::from(date.format("%Y-%m-%d").to_string())),
+                None => params.push(Value::Null),
+            }
+        }
+
+        if sets.is_empty() {
+            return Ok(false);
+        }
+
+        let now = Utc::now().to_rfc3339();
+        sets.push("updated_at = ?".to_string());
+        params.push(Value::from(now));
+        params.push(Value::from(id));
+
+        let sql = format!("UPDATE items SET {} WHERE id = ?", sets.join(", "));
+        let updated = self.conn.execute(&sql, params_from_iter(params))?;
+        Ok(updated > 0)
+    }
+
     pub fn get_items(
         &self,
         bucket_filter: Option<String>,

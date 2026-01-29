@@ -126,6 +126,25 @@ fn handle_connection(
             Ok(false) => DaemonResponse::Error("Item not found".to_string()),
             Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
         },
+        DaemonRequest::UpdateItem {
+            id,
+            bucket,
+            content,
+            priority,
+            due_date,
+            clear_due_date,
+        } => {
+            let due_update = if clear_due_date {
+                Some(None)
+            } else {
+                due_date.map(Some)
+            };
+            match db.update_item(id, bucket, content, priority, due_update) {
+                Ok(true) => DaemonResponse::OkMessage("Updated item".to_string()),
+                Ok(false) => DaemonResponse::Error("Item not found or no updates".to_string()),
+                Err(err) => DaemonResponse::Error(format!("Failed to update item: {err}")),
+            }
+        }
         DaemonRequest::RotatePassword {
             current_password,
             new_password,

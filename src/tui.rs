@@ -48,16 +48,16 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
     render_dashboard(paths)?;
 
     let base_commands: Vec<String> = vec![
-        "start", "stop", "status", "note", "get", "mark", "delete", "undo", "archive", "clear",
-        "exit", "quit", "help",
+        "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo", "archive",
+        "clear", "exit", "quit", "help",
     ]
     .into_iter()
     .map(|s| s.to_string())
     .collect();
     let mut commands = base_commands.clone();
     for topic in [
-        "start", "stop", "status", "note", "get", "mark", "delete", "undo", "archive", "clear",
-        "exit", "quit", "help",
+        "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo", "archive",
+        "clear", "exit", "quit", "help",
     ] {
         commands.push(format!("help {topic}"));
     }
@@ -126,16 +126,17 @@ fn handle_repl_command(
         "help" => {
             if tokens.len() == 1 {
                 println!(
-                    "Commands: start, stop, status, note, get, mark, delete, undo, archive, clear, help, exit"
+                    "Commands: start, stop, status, note, get, mark, update, delete, undo, archive, clear, help, exit"
                 );
             } else {
                 match tokens[1].to_lowercase().as_str() {
                     "start" => println!("start: prompt for password and start the daemon"),
                     "stop" => println!("stop: shut down the daemon"),
                     "status" => println!("status: show daemon status"),
-        "note" => println!("note <text...> [@bucket] [!p1|p1|!p2|p2|!p3|p3] [^date]"),
-        "get" => println!("get [@bucket] [--all|--notes]"),
+                    "note" => println!("note <text...> [@bucket] [!p1|p1|!p2|p2|!p3|p3] [^date]"),
+                    "get" => println!("get [@bucket] [--all|--notes]"),
                     "mark" => println!("mark <id> <open|done|deleted>"),
+                    "update" => println!("update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]"),
                     "delete" => println!("delete <id> | delete all (requires YES confirmation)"),
                     "undo" => println!("undo [id]: restore last archived or a specific id"),
                     "archive" => println!("archive: list archived notes"),
@@ -271,6 +272,42 @@ fn handle_repl_command(
             let status = crate::daemon::parse_status(&tokens[2])
                 .ok_or_else(|| anyhow::anyhow!("Invalid status"))?;
             let request = DaemonRequest::UpdateStatus { id, new_status: status };
+            let response = send_request(paths, &request)?;
+            match response {
+                crate::ipc::DaemonResponse::OkMessage(msg) => println!("{msg}"),
+                crate::ipc::DaemonResponse::Error(err) => eprintln!("{err}"),
+                _ => println!("Updated"),
+            }
+            Ok(())
+        }
+        "update" => {
+            if tokens.len() < 2 {
+                println!("Usage: update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]");
+                return Ok(());
+            }
+            let id: i64 = tokens[1].parse().unwrap_or(0);
+            if id == 0 {
+                println!("Invalid id");
+                return Ok(());
+            }
+            let content_tokens: Vec<String> = tokens.iter().skip(2).cloned().collect();
+            let spec = crate::sigil::parse_update_tokens(&content_tokens);
+            if spec.content.is_none()
+                && spec.bucket.is_none()
+                && spec.priority.is_none()
+                && spec.due_date.is_none()
+            {
+                println!("No updates provided");
+                return Ok(());
+            }
+            let request = DaemonRequest::UpdateItem {
+                id,
+                bucket: spec.bucket,
+                content: spec.content,
+                priority: spec.priority,
+                due_date: spec.due_date.flatten(),
+                clear_due_date: matches!(spec.due_date, Some(None)),
+            };
             let response = send_request(paths, &request)?;
             match response {
                 crate::ipc::DaemonResponse::OkMessage(msg) => println!("{msg}"),
@@ -452,8 +489,8 @@ struct CommandHinter {
 impl CommandHinter {
     fn new(commands: Vec<String>) -> Self {
         let help_topics = vec![
-            "start", "stop", "status", "note", "get", "mark", "delete", "undo", "archive",
-            "clear", "exit", "quit", "help",
+            "start", "stop", "status", "note", "get", "mark", "update", "delete", "undo",
+            "archive", "clear", "exit", "quit", "help",
         ]
         .into_iter()
         .map(|s| s.to_string())
@@ -927,6 +964,7 @@ fn render_dashboard(paths: &KeeperPaths) -> Result<()> {
     let urgent = fetch_urgent(paths)?;
     let approaching = fetch_approaching(paths)?;
     let stats = fetch_stats(paths)?;
+    let overdue = fetch_overdue_counts(paths)?;
 
     println!(" 🚨 URGENT FOCUS (Top P1s) __________________________________");
     if urgent.is_empty() {
@@ -953,6 +991,10 @@ fn render_dashboard(paths: &KeeperPaths) -> Result<()> {
     println!(
         " Open: {} | Done Today: {} | P1: {}",
         stats.0, stats.1, stats.2
+    );
+    println!(
+        " Overdue by Priority: P1 {} | P2 {} | P3 {} | None {}",
+        overdue.0, overdue.1, overdue.2, overdue.3
     );
     println!();
 
@@ -1029,4 +1071,44 @@ fn fetch_stats(paths: &KeeperPaths) -> Result<(i64, i64, i64)> {
         crate::ipc::DaemonResponse::OkStats { open, done_today, p1 } => Ok((open, done_today, p1)),
         _ => Ok((0, 0, 0)),
     }
+}
+
+fn fetch_overdue_counts(paths: &KeeperPaths) -> Result<(usize, usize, usize, usize)> {
+    let today = Local::now().date_naive();
+    let resp = send_request(
+        paths,
+        &DaemonRequest::GetItems {
+            bucket_filter: None,
+            priority_filter: None,
+            status_filter: Some(Status::Open),
+            date_cutoff: Some(today),
+            include_notes: false,
+            notes_only: false,
+        },
+    )?;
+
+    let items = match resp {
+        crate::ipc::DaemonResponse::OkItems(items) => items,
+        _ => Vec::new(),
+    };
+
+    let mut p1 = 0usize;
+    let mut p2 = 0usize;
+    let mut p3 = 0usize;
+    let mut none = 0usize;
+
+    for item in items {
+        if let Some(due) = item.due_date {
+            if due < today {
+                match item.priority {
+                    Priority::P1_Urgent => p1 += 1,
+                    Priority::P2_Important => p2 += 1,
+                    Priority::P3_Task => p3 += 1,
+                    Priority::None => none += 1,
+                }
+            }
+        }
+    }
+
+    Ok((p1, p2, p3, none))
 }
