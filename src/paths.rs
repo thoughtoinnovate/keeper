@@ -7,18 +7,39 @@ pub struct KeeperPaths {
     pub db_path: PathBuf,
     pub socket_path: PathBuf,
     pub pid_path: PathBuf,
+    pub keystore_path: PathBuf,
+    pub vault_arg: Option<PathBuf>,
 }
 
 impl KeeperPaths {
-    pub fn new() -> Result<Self> {
+    pub fn new(vault: Option<&Path>) -> Result<Self> {
         let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("Unable to resolve home directory"))?;
-        let base_dir = base_dirs.home_dir().join(".keeper");
+        let vault_arg = vault.map(|path| path.to_path_buf());
+        let (base_dir, db_path) = match vault {
+            None => {
+                let base = base_dirs.home_dir().join(".keeper");
+                (base.clone(), base.join("vault.db"))
+            }
+            Some(path) => {
+                if path.extension().and_then(|ext| ext.to_str()) == Some("db") || path.is_file() {
+                    let parent = path
+                        .parent()
+                        .ok_or_else(|| anyhow!("Vault file must have a parent directory"))?;
+                    (parent.to_path_buf(), path.to_path_buf())
+                } else {
+                    (path.to_path_buf(), path.join("vault.db"))
+                }
+            }
+        };
+
         std::fs::create_dir_all(&base_dir)?;
         Ok(Self {
-            db_path: base_dir.join("vault.db"),
+            db_path,
             socket_path: base_dir.join("keeper.sock"),
             pid_path: base_dir.join("keeper.pid"),
+            keystore_path: base_dir.join("keystore.json"),
             base_dir,
+            vault_arg,
         })
     }
 
@@ -53,5 +74,9 @@ impl KeeperPaths {
 
     pub fn db_dir(&self) -> &Path {
         &self.base_dir
+    }
+
+    pub fn keystore_path(&self) -> &Path {
+        &self.keystore_path
     }
 }

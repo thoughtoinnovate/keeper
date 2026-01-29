@@ -2,17 +2,22 @@ mod cli;
 mod client;
 mod daemon;
 mod db;
+mod formatting;
 mod ipc;
+mod keystore;
+mod logger;
 mod models;
 mod paths;
+mod prompt;
 mod security;
+mod session;
 mod sigil;
 mod tui;
 
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use clap::Parser;
-use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::io;
 use zeroize::Zeroize;
 
 use crate::cli::{Cli, Commands};
@@ -28,49 +33,47 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let paths = KeeperPaths::new()?;
+    logger::set_debug(cli.debug);
+    let paths = KeeperPaths::new(cli.vault.as_deref())?;
 
     match cli.command {
-        Some(Commands::Start) => cmd_start(&paths),
+        Some(Commands::Start) => cmd_start(&paths, cli.debug),
         Some(Commands::Stop) => cmd_stop(&paths),
         Some(Commands::Status) => cmd_status(&paths),
+        Some(Commands::Passwd) => cmd_passwd(&paths),
+        Some(Commands::Recover(args)) => cmd_recover(&paths, args),
         Some(Commands::Note(args)) => cmd_note(&paths, args),
         Some(Commands::Get(args)) => cmd_get(&paths, args),
         Some(Commands::Mark { id, status }) => cmd_mark(&paths, id, status),
+        Some(Commands::Delete(args)) => cmd_delete(&paths, args),
+        Some(Commands::Undo(args)) => cmd_undo(&paths, args),
+        Some(Commands::Archive) => cmd_archive(&paths),
         Some(Commands::Daemon) => cmd_daemon(&paths),
-        None => tui::run_repl(&paths),
+        None => tui::run_repl(&paths, cli.debug),
     }
 }
 
-fn cmd_start(paths: &KeeperPaths) -> Result<()> {
+fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
     if client::daemon_running(paths) {
         println!("✅ Daemon already running. Socket: {}", paths.socket_path_display());
         return Ok(());
     }
 
-    let password = prompt_password()?;
-    let key = security::derive_key(&password)?;
-    let mut password = password;
-    password.zeroize();
+    let outcome = session::unlock_or_init_master_key(paths)?;
+    if let Some(recovery) = outcome.recovery_code.as_ref() {
+        println!("🧩 Recovery Code (store this safely):\n{recovery}");
+    }
+    let pid = session::start_daemon(paths, &outcome.master_key, debug)?;
+    let mut master_key = outcome.master_key;
+    master_key.zeroize();
 
-    let exe = std::env::current_exe().context("Unable to locate keeper binary")?;
-    let mut child = Command::new(exe)
-        .arg("daemon")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("Failed to spawn daemon")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(key.as_bytes())
-            .context("Failed to send key to daemon")?;
+    if !client::wait_for_daemon(paths, 1500) {
+        return Err(anyhow!("Daemon failed to start"));
     }
 
     println!(
         "✅ Daemon started. PID: {}. Socket: {}",
-        child.id(),
+        pid,
         paths.socket_path_display()
     );
 
@@ -123,14 +126,16 @@ fn cmd_get(paths: &KeeperPaths, args: cli::GetArgs) -> Result<()> {
     let request = DaemonRequest::GetItems {
         bucket_filter,
         priority_filter: None,
-        status_filter: None,
+        status_filter: Some(models::Status::Open),
         date_cutoff: None,
+        include_notes: args.all,
+        notes_only: args.notes,
     };
     let response = client::send_request(paths, &request)?;
 
     match response {
         DaemonResponse::OkItems(items) => {
-            let table = format_items_table(items);
+            let table = formatting::format_items_table(items);
             println!("{table}");
         }
         DaemonResponse::Error(err) => return Err(anyhow!(err)),
@@ -151,6 +156,108 @@ fn cmd_mark(paths: &KeeperPaths, id: i64, status: String) -> Result<()> {
     Ok(())
 }
 
+fn cmd_delete(paths: &KeeperPaths, args: cli::DeleteArgs) -> Result<()> {
+    if args.all {
+        if !args.yes && !confirm("Type YES to archive all notes: ")? {
+            println!("Aborted.");
+            return Ok(());
+        }
+        let _ = prompt::prompt_password()?;
+        let response = client::send_request(paths, &DaemonRequest::ArchiveAll)?;
+        match response {
+            DaemonResponse::OkMessage(msg) => println!("{msg}"),
+            DaemonResponse::Error(err) => return Err(anyhow!(err)),
+            _ => println!("Archived"),
+        }
+        return Ok(());
+    }
+
+    let id = args.id.ok_or_else(|| anyhow!("Provide an id or use --all"))?;
+    let request = DaemonRequest::UpdateStatus {
+        id,
+        new_status: models::Status::Deleted,
+    };
+    let response = client::send_request(paths, &request)?;
+    match response {
+        DaemonResponse::OkMessage(msg) => println!("{msg}"),
+        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        _ => println!("Archived"),
+    }
+    Ok(())
+}
+
+fn cmd_undo(paths: &KeeperPaths, args: cli::UndoArgs) -> Result<()> {
+    let response = client::send_request(paths, &DaemonRequest::Undo { id: args.id })?;
+    match response {
+        DaemonResponse::OkMessage(msg) => println!("{msg}"),
+        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        _ => println!("Undo complete"),
+    }
+    Ok(())
+}
+
+fn cmd_archive(paths: &KeeperPaths) -> Result<()> {
+    let request = DaemonRequest::GetItems {
+        bucket_filter: None,
+        priority_filter: None,
+        status_filter: Some(models::Status::Deleted),
+        date_cutoff: None,
+        include_notes: true,
+        notes_only: false,
+    };
+    let response = client::send_request(paths, &request)?;
+    match response {
+        DaemonResponse::OkItems(items) => {
+            let table = formatting::format_items_table(items);
+            println!("{table}");
+        }
+        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        _ => println!("No archived items"),
+    }
+    Ok(())
+}
+
+fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
+    if !client::daemon_running(paths) {
+        return Err(anyhow!("Daemon not running. Start the vault first."));
+    }
+    let mut request = DaemonRequest::RotatePassword {
+        password: prompt::prompt_password_confirm()?,
+    };
+    let response = client::send_request(paths, &request)?;
+    if let DaemonRequest::RotatePassword { password } = &mut request {
+        password.zeroize();
+    }
+    match response {
+        DaemonResponse::OkMessage(msg) => println!("{msg}"),
+        DaemonResponse::Error(err) => return Err(anyhow!(err)),
+        _ => println!("Password updated"),
+    }
+    Ok(())
+}
+
+fn cmd_recover(paths: &KeeperPaths, args: cli::RecoverArgs) -> Result<()> {
+    let keystore = keystore::Keystore::load(paths.keystore_path())
+        .context("Keystore not found; start the vault first")?;
+    let mut recovery = match args.code {
+        Some(code) => code,
+        None => prompt::prompt_recovery_code()?,
+    };
+    let master_key = keystore.unwrap_with_recovery(&recovery)?;
+    recovery.zeroize();
+
+    let mut new_password = prompt::prompt_password_confirm()?;
+    let mut keystore = keystore;
+    keystore.rewrap_password(&new_password, &master_key)?;
+    keystore.save(paths.keystore_path())?;
+    new_password.zeroize();
+    let mut master_key = master_key;
+    master_key.zeroize();
+
+    println!("✅ Password reset. You can now run `keeper start`.");
+    Ok(())
+}
+
 fn cmd_daemon(paths: &KeeperPaths) -> Result<()> {
     let mut key = String::new();
     io::stdin().read_line(&mut key)?;
@@ -158,68 +265,39 @@ fn cmd_daemon(paths: &KeeperPaths) -> Result<()> {
     if key.is_empty() {
         return Err(anyhow!("Missing key"));
     }
+    let key_bytes = base64::engine::general_purpose::STANDARD_NO_PAD
+        .decode(key)
+        .map_err(|_| anyhow!("Invalid master key data"))?;
+    if key_bytes.len() != security::MASTER_KEY_LEN {
+        return Err(anyhow!("Invalid master key length"));
+    }
+    let mut master_key = [0u8; security::MASTER_KEY_LEN];
+    master_key.copy_from_slice(&key_bytes);
+    logger::debug("Daemon starting");
     #[cfg(unix)]
     {
-        daemonize::Daemonize::new()
-            .stdout(daemonize::Stdio::devnull())
-            .stderr(daemonize::Stdio::devnull())
-            .start()
-            .context("Failed to daemonize")?;
+        let mut d = daemonize::Daemonize::new();
+        if logger::is_debug() {
+            d = d.stdout(daemonize::Stdio::keep()).stderr(daemonize::Stdio::keep());
+        } else {
+            d = d.stdout(daemonize::Stdio::devnull()).stderr(daemonize::Stdio::devnull());
+        }
+        d.start().context("Failed to daemonize")?;
     }
-    daemon::run_daemon(key, paths)
-}
-
-fn prompt_password() -> Result<String> {
-    print!("🔒 Enter Keeper Vault Password: ");
-    io::stdout().flush()?;
-    let mut password = String::new();
-    io::stdin().read_line(&mut password)?;
-    Ok(password.trim().to_string())
-}
-
-fn format_items_table(items: Vec<models::Item>) -> String {
-    use chrono::{Duration, Local, NaiveDate};
-    use tabled::Tabled;
-
-    #[derive(Tabled)]
-    struct Row {
-        #[tabled(rename = "ID")]
-        id: i64,
-        #[tabled(rename = "Bucket")]
-        bucket: String,
-        #[tabled(rename = "Content")]
-        content: String,
-        #[tabled(rename = "Priority")]
-        priority: String,
-        #[tabled(rename = "Due")]
-        due: String,
-    }
-
-    fn display_due_date(date: Option<NaiveDate>) -> String {
-        let today = Local::now().date_naive();
-        let tomorrow = today + Duration::days(1);
-        match date {
-            Some(d) if d == today => "Today".to_string(),
-            Some(d) if d == tomorrow => "Tomorrow".to_string(),
-            Some(d) => d.format("%Y-%m-%d").to_string(),
-            None => "".to_string(),
+    match daemon::run_daemon(master_key, paths) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            logger::error(&format!("Daemon error: {err}"));
+            Err(err)
         }
     }
+}
 
-    let rows: Vec<Row> = items
-        .into_iter()
-        .map(|item| Row {
-            id: item.id,
-            bucket: item.bucket,
-            content: item.content,
-            priority: item.priority.to_string(),
-            due: display_due_date(item.due_date),
-        })
-        .collect();
-
-    if rows.is_empty() {
-        return "(no items)".to_string();
-    }
-
-    tabled::Table::new(rows).to_string()
+fn confirm(prompt: &str) -> Result<bool> {
+    use std::io::Write;
+    print!("{prompt}");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(input.trim() == "YES")
 }

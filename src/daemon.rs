@@ -1,37 +1,78 @@
-use crate::db::Db;
+use crate::db::{Db, InsertOutcome};
 use crate::ipc::{DaemonRequest, DaemonResponse};
+use crate::keystore::Keystore;
 use crate::models::{Priority, Status};
 use crate::paths::KeeperPaths;
-use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use crate::{logger, security};
+use anyhow::Result;
+use chrono::{NaiveDate, Utc};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
-pub fn run_daemon(mut key: String, paths: &KeeperPaths) -> Result<()> {
+pub fn run_daemon(
+    mut master_key: [u8; security::MASTER_KEY_LEN],
+    paths: &KeeperPaths,
+) -> Result<()> {
+    logger::debug("Daemon initializing");
     paths.ensure_base_dir()?;
     paths.remove_socket_if_exists();
 
-    let db = Db::open(&paths.db_path, &key).context("Failed to open database")?;
+    let mut db_key = security::derive_db_key_hex(&master_key);
+    let db = match Db::open(&paths.db_path, &db_key) {
+        Ok(db) => db,
+        Err(err) => {
+            logger::error(&format!("Failed to open database: {err}"));
+            return Err(err);
+        }
+    };
+    db_key.zeroize();
+    if let Ok(count) = db.purge_archived_before(Utc::now() - chrono::Duration::days(1)) {
+        if count > 0 {
+            logger::debug(&format!("Purged {count} archived items"));
+        }
+    }
 
-    let listener = UnixListener::bind(&paths.socket_path)?;
+    let listener = match UnixListener::bind(&paths.socket_path) {
+        Ok(listener) => listener,
+        Err(err) => {
+            logger::error(&format!("Failed to bind socket: {err}"));
+            return Err(err.into());
+        }
+    };
     paths.set_socket_permissions()?;
 
     let running = Arc::new(AtomicBool::new(true));
 
     while running.load(Ordering::SeqCst) {
-        let (stream, _) = listener.accept()?;
-        handle_connection(stream, &db, &running)?;
+        let (stream, _) = match listener.accept() {
+            Ok(pair) => pair,
+            Err(err) => {
+                logger::error(&format!("IPC accept failed: {err}"));
+                continue;
+            }
+        };
+        logger::debug("Accepted IPC connection");
+        if let Err(err) = handle_connection(stream, &db, &running, paths, &master_key) {
+            logger::error(&format!("IPC handler error: {err}"));
+        }
     }
 
-    key.zeroize();
+    master_key.zeroize();
     paths.remove_socket_if_exists();
+    logger::debug("Daemon shutdown complete");
     Ok(())
 }
 
-fn handle_connection(stream: UnixStream, db: &Db, running: &AtomicBool) -> Result<()> {
+fn handle_connection(
+    stream: UnixStream,
+    db: &Db,
+    running: &AtomicBool,
+    paths: &KeeperPaths,
+    master_key: &[u8; security::MASTER_KEY_LEN],
+) -> Result<()> {
     let mut stream = stream;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf)?;
@@ -39,12 +80,14 @@ fn handle_connection(stream: UnixStream, db: &Db, running: &AtomicBool) -> Resul
     let req: DaemonRequest = match serde_json::from_slice(&buf) {
         Ok(req) => req,
         Err(err) => {
+            logger::error(&format!("Invalid request: {err}"));
             let resp = DaemonResponse::Error(format!("Invalid request: {err}"));
             send_response(&mut stream, &resp)?;
             return Ok(());
         }
     };
 
+    logger::debug("Handling IPC request");
     let response = match req {
         DaemonRequest::CreateNote {
             bucket,
@@ -52,7 +95,12 @@ fn handle_connection(stream: UnixStream, db: &Db, running: &AtomicBool) -> Resul
             priority,
             due_date,
         } => match db.insert_item(&bucket, &content, priority, due_date) {
-            Ok(id) => DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})")),
+            Ok(InsertOutcome::Inserted(id)) => {
+                DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})"))
+            }
+            Ok(InsertOutcome::Duplicate(id)) => DaemonResponse::OkMessage(format!(
+                "[=] Duplicate ignored in {bucket} (ID: {id})"
+            )),
             Err(err) => DaemonResponse::Error(format!("Failed to save note: {err}")),
         },
         DaemonRequest::GetItems {
@@ -60,14 +108,39 @@ fn handle_connection(stream: UnixStream, db: &Db, running: &AtomicBool) -> Resul
             priority_filter,
             status_filter,
             date_cutoff,
-        } => match db.get_items(bucket_filter, priority_filter, status_filter, date_cutoff) {
+            include_notes,
+            notes_only,
+        } => match db.get_items(
+            bucket_filter,
+            priority_filter,
+            status_filter,
+            date_cutoff,
+            include_notes,
+            notes_only,
+        ) {
             Ok(items) => DaemonResponse::OkItems(items),
             Err(err) => DaemonResponse::Error(format!("Failed to fetch items: {err}")),
         },
         DaemonRequest::UpdateStatus { id, new_status } => match db.update_status(id, new_status) {
-            Ok(_) => DaemonResponse::OkMessage("Updated status".to_string()),
+            Ok(true) => DaemonResponse::OkMessage("Updated status".to_string()),
+            Ok(false) => DaemonResponse::Error("Item not found".to_string()),
             Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
         },
+        DaemonRequest::RotatePassword { password } => {
+            let mut password = password;
+            let response = match Keystore::load(paths.keystore_path()) {
+                Ok(mut keystore) => match keystore.rewrap_password(&password, master_key) {
+                    Ok(()) => match keystore.save(paths.keystore_path()) {
+                        Ok(()) => DaemonResponse::OkMessage("Password updated".to_string()),
+                        Err(err) => DaemonResponse::Error(format!("Failed to save keystore: {err}")),
+                    },
+                    Err(err) => DaemonResponse::Error(format!("Failed to update password: {err}")),
+                },
+                Err(err) => DaemonResponse::Error(format!("Failed to load keystore: {err}")),
+            };
+            password.zeroize();
+            response
+        }
         DaemonRequest::GetDashboardStats => match db.stats() {
             Ok((open, done_today, p1)) => DaemonResponse::OkStats {
                 open,
@@ -76,6 +149,25 @@ fn handle_connection(stream: UnixStream, db: &Db, running: &AtomicBool) -> Resul
             },
             Err(err) => DaemonResponse::Error(format!("Failed to fetch stats: {err}")),
         },
+        DaemonRequest::ArchiveAll => match db.archive_all() {
+            Ok(count) => DaemonResponse::OkMessage(format!("Archived {count} item(s)")),
+            Err(err) => DaemonResponse::Error(format!("Failed to archive: {err}")),
+        },
+        DaemonRequest::Undo { id } => {
+            if let Some(id) = id {
+                match db.update_status(id, Status::Open) {
+                    Ok(true) => DaemonResponse::OkMessage(format!("Restored {id}")),
+                    Ok(false) => DaemonResponse::Error("Item not found".to_string()),
+                    Err(err) => DaemonResponse::Error(format!("Failed to undo: {err}")),
+                }
+            } else {
+                match db.undo_last() {
+                    Ok(Some(id)) => DaemonResponse::OkMessage(format!("Restored {id}")),
+                    Ok(None) => DaemonResponse::OkMessage("No archived items".to_string()),
+                    Err(err) => DaemonResponse::Error(format!("Failed to undo: {err}")),
+                }
+            }
+        }
         DaemonRequest::Shutdown => {
             running.store(false, Ordering::SeqCst);
             DaemonResponse::OkMessage("Daemon shutting down".to_string())

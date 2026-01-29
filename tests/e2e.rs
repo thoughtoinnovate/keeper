@@ -11,7 +11,7 @@ fn test_quick_capture_flow() {
         .unwrap()
         .env("HOME", home)
         .arg("start")
-        .write_stdin("pass\n")
+        .write_stdin("pass\npass\n")
         .assert()
         .success();
 

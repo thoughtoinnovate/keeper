@@ -1,19 +1,29 @@
 use anyhow::Result;
 use argon2::Argon2;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use zeroize::Zeroize;
 
-const SALT: &[u8] = b"keeper-salt-16"; // 16 bytes for Argon2 salt
+pub const MASTER_KEY_LEN: usize = 32;
 
-pub fn derive_key(password: &str) -> Result<String> {
+pub fn generate_master_key() -> [u8; MASTER_KEY_LEN] {
+    let mut key = [0u8; MASTER_KEY_LEN];
+    OsRng.fill_bytes(&mut key);
+    key
+}
+
+pub fn derive_key_material(secret: &str, salt: &[u8]) -> Result<[u8; 32]> {
     let mut output = [0u8; 32];
-    let mut pwd = password.as_bytes().to_vec();
+    let mut secret_bytes = secret.as_bytes().to_vec();
     Argon2::default()
-        .hash_password_into(&pwd, SALT, &mut output)
+        .hash_password_into(&secret_bytes, salt, &mut output)
         .map_err(|err| anyhow::anyhow!("Argon2 error: {err}"))?;
-    pwd.zeroize();
-    let key = hex_encode(&output);
-    output.zeroize();
-    Ok(key)
+    secret_bytes.zeroize();
+    Ok(output)
+}
+
+pub fn derive_db_key_hex(master_key: &[u8]) -> String {
+    hex_encode(master_key)
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

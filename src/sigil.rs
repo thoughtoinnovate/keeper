@@ -41,10 +41,10 @@ fn parse_bucket(token: &str) -> Option<String> {
 }
 
 fn parse_priority(token: &str) -> Option<Priority> {
-    match token {
-        "!p1" => Some(Priority::P1_Urgent),
-        "!p2" => Some(Priority::P2_Important),
-        "!p3" => Some(Priority::P3_Task),
+    match token.to_lowercase().as_str() {
+        "!p1" | "p1" => Some(Priority::P1_Urgent),
+        "!p2" | "p2" => Some(Priority::P2_Important),
+        "!p3" | "p3" => Some(Priority::P3_Task),
         _ => None,
     }
 }
@@ -139,5 +139,14 @@ mod tests {
         assert_eq!(content, "Plan");
         assert_eq!(bucket, "@work");
         assert_eq!(priority, Priority::P3_Task);
+    }
+
+    #[test]
+    fn parse_priority_without_bang() {
+        let args = NoteArgs {
+            content: vec!["Task".into(), "p1".into()],
+        };
+        let (_, _, priority, _) = parse_note_args(&args);
+        assert_eq!(priority, Priority::P1_Urgent);
     }
 }

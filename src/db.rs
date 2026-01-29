@@ -1,7 +1,7 @@
 use crate::models::{Item, Priority, Status};
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{params_from_iter, Connection};
+use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use rusqlite::types::Value;
 use std::path::Path;
 
@@ -26,6 +26,11 @@ pub struct Db {
     conn: Connection,
 }
 
+pub enum InsertOutcome {
+    Inserted(i64),
+    Duplicate(i64),
+}
+
 impl Db {
     pub fn open(path: &Path, key: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -40,9 +45,45 @@ impl Db {
         content: &str,
         priority: Priority,
         due_date: Option<NaiveDate>,
-    ) -> Result<i64> {
+    ) -> Result<InsertOutcome> {
         let now = Utc::now();
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(anyhow::anyhow!("Note content cannot be empty"));
+        }
         let due_date_str = due_date.map(|d| d.format("%Y-%m-%d").to_string());
+
+        let mut dup_sql = String::from(
+            "SELECT id FROM items WHERE bucket = ?1 AND content = ?2 AND priority = ?3 AND status = ?4",
+        );
+        if due_date_str.is_some() {
+            dup_sql.push_str(" AND due_date = ?5");
+        } else {
+            dup_sql.push_str(" AND due_date IS NULL");
+        }
+        dup_sql.push_str(" ORDER BY id DESC LIMIT 1");
+        let dup_id: Option<i64> = if let Some(ref due) = due_date_str {
+            self.conn
+                .query_row(
+                    &dup_sql,
+                    (bucket, content, priority.as_str(), Status::Open.as_str(), due),
+                    |row| row.get(0),
+                )
+                .optional()?
+        } else {
+            self.conn
+                .query_row(
+                    &dup_sql,
+                    (bucket, content, priority.as_str(), Status::Open.as_str()),
+                    |row| row.get(0),
+                )
+                .optional()?
+        };
+
+        if let Some(id) = dup_id {
+            return Ok(InsertOutcome::Duplicate(id));
+        }
+
         self.conn.execute(
             "INSERT INTO items (bucket, content, priority, status, due_date, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -56,16 +97,16 @@ impl Db {
                 now.to_rfc3339(),
             ),
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(InsertOutcome::Inserted(self.conn.last_insert_rowid()))
     }
 
-    pub fn update_status(&self, id: i64, new_status: Status) -> Result<()> {
+    pub fn update_status(&self, id: i64, new_status: Status) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        self.conn.execute(
+        let updated = self.conn.execute(
             "UPDATE items SET status = ?1, updated_at = ?2 WHERE id = ?3",
             (new_status.as_str(), now, id),
         )?;
-        Ok(())
+        Ok(updated > 0)
     }
 
     pub fn get_items(
@@ -74,6 +115,8 @@ impl Db {
         priority_filter: Option<Priority>,
         status_filter: Option<Status>,
         date_cutoff: Option<NaiveDate>,
+        include_notes: bool,
+        notes_only: bool,
     ) -> Result<Vec<Item>> {
         let mut sql = String::from(
             "SELECT id, bucket, content, priority, status, due_date, created_at, updated_at FROM items",
@@ -94,8 +137,22 @@ impl Db {
             params.push(Value::from(status.as_str().to_string()));
         }
         if let Some(cutoff) = date_cutoff {
-            conditions.push("due_date IS NOT NULL AND due_date <= ?".to_string());
+            conditions.push(
+                "due_date IS NOT NULL AND trim(due_date) != '' AND length(due_date) = 10 AND due_date <= ?"
+                    .to_string(),
+            );
             params.push(Value::from(cutoff.format("%Y-%m-%d").to_string()));
+        }
+        if notes_only {
+            conditions.push(
+                "(due_date IS NULL OR trim(due_date) = '' OR length(due_date) != 10)"
+                    .to_string(),
+            );
+        } else if !include_notes {
+            conditions.push(
+                "due_date IS NOT NULL AND trim(due_date) != '' AND length(due_date) = 10"
+                    .to_string(),
+            );
         }
 
         if !conditions.is_empty() {
@@ -162,6 +219,41 @@ impl Db {
         )?;
 
         Ok((open, done_today, p1))
+    }
+
+    pub fn archive_all(&self) -> Result<i64> {
+        let now = Utc::now().to_rfc3339();
+        let updated = self.conn.execute(
+            "UPDATE items SET status = ?1, updated_at = ?2 WHERE status != ?1",
+            (Status::Deleted.as_str(), now),
+        )?;
+        Ok(updated as i64)
+    }
+
+    pub fn undo_last(&self) -> Result<Option<i64>> {
+        let id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM items WHERE status = ?1 ORDER BY updated_at DESC LIMIT 1",
+                [Status::Deleted.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = id {
+            let _ = self.update_status(id, Status::Open)?;
+            Ok(Some(id))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn purge_archived_before(&self, cutoff: DateTime<Utc>) -> Result<i64> {
+        let cutoff = cutoff.to_rfc3339();
+        let deleted = self.conn.execute(
+            "DELETE FROM items WHERE status = ?1 AND updated_at < ?2",
+            (Status::Deleted.as_str(), cutoff),
+        )?;
+        Ok(deleted as i64)
     }
 }
 

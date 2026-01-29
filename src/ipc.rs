@@ -14,10 +14,15 @@ pub enum DaemonRequest {
         bucket_filter: Option<String>,
         priority_filter: Option<Priority>,
         status_filter: Option<Status>,
-        date_cutoff: Option<NaiveDate>,
+        date_cutoff: Option<NaiveDate>, 
+        include_notes: bool,
+        notes_only: bool,
     },
     UpdateStatus { id: i64, new_status: Status },
+    RotatePassword { password: String },
     GetDashboardStats,
+    ArchiveAll,
+    Undo { id: Option<i64> },
     Shutdown,
 }
 
