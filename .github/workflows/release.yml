@@ -41,4 +41,4 @@ jobs:
           build-tool: ${{ matrix.config.build_tool }}
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
-          include: LICENSE, README.md
+          include: LICENSE,README.md
