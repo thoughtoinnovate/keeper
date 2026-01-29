@@ -1,11 +1,9 @@
 use crate::cli::{NoteArgs, UpdateArgs};
 use crate::models::Priority;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{Duration, Local, NaiveDate};
 
-pub fn parse_note_args(
-    args: &NoteArgs,
-) -> Result<(String, String, Priority, Option<NaiveDate>)> {
+pub fn parse_note_args(args: &NoteArgs) -> Result<(String, String, Priority, Option<NaiveDate>)> {
     let mut bucket = "@inbox".to_string();
     let mut priority = Priority::None;
     let mut due_date: Option<NaiveDate> = None;
@@ -118,7 +116,9 @@ fn parse_due_date_token_strict(token: &str) -> Result<Option<NaiveDate>> {
         _ => NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok(),
     };
 
-    parsed.ok_or_else(|| anyhow!("Invalid due date: {raw}")).map(Some)
+    parsed
+        .ok_or_else(|| anyhow!("Invalid due date: {raw}"))
+        .map(Some)
 }
 
 fn parse_update_priority(token: &str) -> Option<Priority> {
@@ -179,7 +179,10 @@ mod tests {
         assert_eq!(content, "Fix auth bug");
         assert_eq!(bucket, "@work");
         assert_eq!(priority, Priority::P1_Urgent);
-        assert_eq!(due_date, Some(NaiveDate::from_ymd_opt(2025, 12, 31).unwrap()));
+        assert_eq!(
+            due_date,
+            Some(NaiveDate::from_ymd_opt(2025, 12, 31).unwrap())
+        );
     }
 
     #[test]
@@ -210,7 +213,13 @@ mod tests {
     #[test]
     fn last_bucket_and_priority_win() {
         let args = NoteArgs {
-            content: vec!["Plan".into(), "@home".into(), "@work".into(), "!p2".into(), "!p3".into()],
+            content: vec![
+                "Plan".into(),
+                "@home".into(),
+                "@work".into(),
+                "!p2".into(),
+                "!p3".into(),
+            ],
         };
         let (content, bucket, priority, _) = parse_note_args(&args).unwrap();
         assert_eq!(content, "Plan");

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use argon2::Argon2;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use zeroize::Zeroize;
 
 pub const MASTER_KEY_LEN: usize = 32;

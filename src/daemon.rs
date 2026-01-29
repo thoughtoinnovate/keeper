@@ -8,8 +8,8 @@ use anyhow::Result;
 use chrono::{NaiveDate, Utc};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroize;
 
 pub fn run_daemon(
@@ -98,9 +98,9 @@ fn handle_connection(
             Ok(InsertOutcome::Inserted(id)) => {
                 DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})"))
             }
-            Ok(InsertOutcome::Duplicate(id)) => DaemonResponse::OkMessage(format!(
-                "[=] Duplicate ignored in {bucket} (ID: {id})"
-            )),
+            Ok(InsertOutcome::Duplicate(id)) => {
+                DaemonResponse::OkMessage(format!("[=] Duplicate ignored in {bucket} (ID: {id})"))
+            }
             Err(err) => DaemonResponse::Error(format!("Failed to save note: {err}")),
         },
         DaemonRequest::GetItems {
@@ -166,15 +166,13 @@ fn handle_connection(
                                     Ok(()) => {
                                         DaemonResponse::OkMessage("Password updated".to_string())
                                     }
-                                    Err(err) => {
-                                        DaemonResponse::Error(format!(
-                                            "Failed to save keystore: {err}"
-                                        ))
-                                    }
+                                    Err(err) => DaemonResponse::Error(format!(
+                                        "Failed to save keystore: {err}"
+                                    )),
                                 },
-                                Err(err) => {
-                                    DaemonResponse::Error(format!("Failed to update password: {err}"))
-                                }
+                                Err(err) => DaemonResponse::Error(format!(
+                                    "Failed to update password: {err}"
+                                )),
                             }
                         }
                     }

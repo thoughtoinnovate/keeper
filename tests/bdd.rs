@@ -1,5 +1,5 @@
 use assert_cmd::cargo::cargo_bin;
-use cucumber::{given, then, when, World};
+use cucumber::{World, given, then, when};
 use futures::FutureExt as _;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -33,6 +33,8 @@ impl KeeperWorld {
         cmd.env("HOME", self.home.path());
         cmd.current_dir(&self.cwd);
         cmd.args(args);
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
         if stdin.is_some() {
             cmd.stdin(Stdio::piped());
         }
@@ -128,8 +130,16 @@ fn stop_daemon(world: &mut KeeperWorld) {
     world.run_keeper(&["stop"], None);
 }
 
-#[when(expr = "I add a note {string} in bucket {string} with priority {string} and due date {string}")]
-fn add_note(world: &mut KeeperWorld, content: String, bucket: String, priority: String, due: String) {
+#[when(
+    expr = "I add a note {string} in bucket {string} with priority {string} and due date {string}"
+)]
+fn add_note(
+    world: &mut KeeperWorld,
+    content: String,
+    bucket: String,
+    priority: String,
+    due: String,
+) {
     world.run_keeper(&["note", &content, &bucket, &priority, &due], None);
 }
 
@@ -153,7 +163,7 @@ fn run_with_no_content(world: &mut KeeperWorld, cmd: String) {
     world.run_keeper(&[cmd.as_str()], None);
 }
 
-#[when("I recover the vault using the saved recovery code and new password {string}")]
+#[when(expr = "I recover the vault using the saved recovery code and new password {string}")]
 fn recover_with_saved_code(world: &mut KeeperWorld, new_password: String) {
     let code = world
         .recovery_code

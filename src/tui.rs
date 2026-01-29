@@ -6,17 +6,17 @@ use crate::{logger, prompt, session, timeline};
 use anyhow::Result;
 use chrono::{Duration, Local};
 use clap::CommandFactory;
-use std::io::IsTerminal;
 use reedline::{
-    default_emacs_keybindings, ColumnarMenu, Completer, DefaultPrompt, DefaultPromptSegment,
-    Emacs, Hinter, History, KeyCode, KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu,
-    Signal, Span, Suggestion,
+    ColumnarMenu, Completer, DefaultPrompt, DefaultPromptSegment, Emacs, Hinter, History, KeyCode,
+    KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu, Signal, Span, Suggestion,
+    default_emacs_keybindings,
 };
+use std::collections::BTreeSet;
+use std::io::IsTerminal;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 use tabled::{Table, Tabled};
 use zeroize::Zeroize;
-use std::io::Write;
-use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
 
 #[derive(Tabled)]
 struct UrgentRow {
@@ -61,7 +61,10 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
         buckets.clone(),
         help_topics.clone(),
     ));
-    let hinter = Box::new(CommandHinter::new(base_commands.clone(), help_topics.clone()));
+    let hinter = Box::new(CommandHinter::new(
+        base_commands.clone(),
+        help_topics.clone(),
+    ));
     let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
     let mut keybindings = default_emacs_keybindings();
     keybindings.add_binding(
@@ -87,9 +90,7 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
         match line_editor.read_line(&prompt) {
             Ok(Signal::Success(input)) => {
                 let trimmed = input.trim();
-                if trimmed.eq_ignore_ascii_case("exit")
-                    || trimmed.eq_ignore_ascii_case("quit")
-                {
+                if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
                     break;
                 }
                 if !trimmed.is_empty() {
@@ -187,14 +188,13 @@ fn handle_repl_command(
                 return Ok(());
             }
             let args = crate::cli::NoteArgs { content };
-            let (content, bucket, priority, due_date) =
-                match crate::sigil::parse_note_args(&args) {
-                    Ok(parsed) => parsed,
-                    Err(err) => {
-                        eprintln!("{err}");
-                        return Ok(());
-                    }
-                };
+            let (content, bucket, priority, due_date) = match crate::sigil::parse_note_args(&args) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return Ok(());
+                }
+            };
             if content.is_empty() {
                 eprintln!("Note content cannot be empty");
                 return Ok(());
@@ -265,7 +265,10 @@ fn handle_repl_command(
             let id: i64 = tokens[1].parse().unwrap_or(0);
             let status = crate::daemon::parse_status(&tokens[2])
                 .ok_or_else(|| anyhow::anyhow!("Invalid status"))?;
-            let request = DaemonRequest::UpdateStatus { id, new_status: status };
+            let request = DaemonRequest::UpdateStatus {
+                id,
+                new_status: status,
+            };
             let response = send_request(paths, &request)?;
             match response {
                 crate::ipc::DaemonResponse::OkMessage(msg) => println!("{msg}"),
@@ -576,12 +579,7 @@ impl Hinter for CommandHinter {
         let has_space = trimmed.contains(' ') || trimmed.contains('\t');
 
         if !has_space && !is_first_complete {
-            if let Some(cmd) = self
-                .commands
-                .iter()
-                .filter(|c| c.starts_with(first))
-                .min()
-            {
+            if let Some(cmd) = self.commands.iter().filter(|c| c.starts_with(first)).min() {
                 if cmd.len() > first.len() {
                     self.current_hint = cmd[first.len()..].to_string();
                 }
@@ -743,7 +741,11 @@ struct KeeperCompleter {
 }
 
 impl KeeperCompleter {
-    fn new(commands: Vec<String>, buckets: Arc<Mutex<Vec<String>>>, help_topics: Vec<String>) -> Self {
+    fn new(
+        commands: Vec<String>,
+        buckets: Arc<Mutex<Vec<String>>>,
+        help_topics: Vec<String>,
+    ) -> Self {
         Self {
             commands,
             buckets,
@@ -832,17 +834,20 @@ impl KeeperCompleter {
         }
 
         let mut suggestions = Vec::new();
-        let current = if ends_with_space {
-            None
-        } else {
-            tokens.last()
-        };
+        let current = if ends_with_space { None } else { tokens.last() };
         let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
         let span_start = current.map(|t| t.start).unwrap_or(pos);
 
-        if current_text.starts_with('@') || (!has_bucket && (ends_with_space || current_text.is_empty())) {
+        if current_text.starts_with('@')
+            || (!has_bucket && (ends_with_space || current_text.is_empty()))
+        {
             let buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
-            suggestions.extend(suggest_from_candidates(&buckets, current_text, span_start, pos));
+            suggestions.extend(suggest_from_candidates(
+                &buckets,
+                current_text,
+                span_start,
+                pos,
+            ));
         }
 
         if current_text.starts_with('p')
@@ -850,12 +855,24 @@ impl KeeperCompleter {
             || (!has_priority && (ends_with_space || current_text.is_empty()))
         {
             let priorities = vec!["p1", "p2", "p3"];
-            suggestions.extend(suggest_from_candidates(&priorities, current_text, span_start, pos));
+            suggestions.extend(suggest_from_candidates(
+                &priorities,
+                current_text,
+                span_start,
+                pos,
+            ));
         }
 
-        if current_text.starts_with('^') || (!has_date && (ends_with_space || current_text.is_empty())) {
+        if current_text.starts_with('^')
+            || (!has_date && (ends_with_space || current_text.is_empty()))
+        {
             let dates = build_date_candidates();
-            suggestions.extend(suggest_from_candidates(&dates, current_text, span_start, pos));
+            suggestions.extend(suggest_from_candidates(
+                &dates,
+                current_text,
+                span_start,
+                pos,
+            ));
         }
 
         suggestions
@@ -1056,7 +1073,11 @@ fn build_repl_commands() -> Vec<String> {
         }
         cmds.push(sub.get_name().to_string());
     }
-    cmds.extend(["clear", "exit", "quit", "help"].iter().map(|s| s.to_string()));
+    cmds.extend(
+        ["clear", "exit", "quit", "help"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
     cmds
 }
 
@@ -1147,10 +1168,7 @@ fn render_dashboard(paths: &KeeperPaths) -> Result<()> {
         println!(" * (none)");
     } else {
         for item in approaching {
-            println!(
-                " * [{}] {} ({})",
-                item.priority, item.content, item.bucket
-            );
+            println!(" * [{}] {} ({})", item.priority, item.content, item.bucket);
         }
     }
     println!();
@@ -1236,7 +1254,11 @@ fn fetch_approaching(paths: &KeeperPaths) -> Result<Vec<Item>> {
 fn fetch_stats(paths: &KeeperPaths) -> Result<(i64, i64, i64)> {
     let resp = send_request(paths, &DaemonRequest::GetDashboardStats)?;
     match resp {
-        crate::ipc::DaemonResponse::OkStats { open, done_today, p1 } => Ok((open, done_today, p1)),
+        crate::ipc::DaemonResponse::OkStats {
+            open,
+            done_today,
+            p1,
+        } => Ok((open, done_today, p1)),
         _ => Ok((0, 0, 0)),
     }
 }

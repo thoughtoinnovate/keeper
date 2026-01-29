@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,8 @@ pub struct KeeperPaths {
 
 impl KeeperPaths {
     pub fn new(vault: Option<&Path>) -> Result<Self> {
-        let base_dirs = BaseDirs::new().ok_or_else(|| anyhow!("Unable to resolve home directory"))?;
+        let base_dirs =
+            BaseDirs::new().ok_or_else(|| anyhow!("Unable to resolve home directory"))?;
         let resolved_vault = match vault {
             Some(path) if path.is_absolute() => Some(path.to_path_buf()),
             Some(path) => Some(std::env::current_dir()?.join(path)),

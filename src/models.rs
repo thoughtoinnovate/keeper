@@ -4,10 +4,10 @@ use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone, Copy)]
 pub enum Priority {
-    P1_Urgent,   // !p1
+    P1_Urgent,    // !p1
     P2_Important, // !p2
-    P3_Task,     // !p3
-    None,        // No sigil provided (Reference Note)
+    P3_Task,      // !p3
+    None,         // No sigil provided (Reference Note)
 }
 
 // Needed for displaying in tables

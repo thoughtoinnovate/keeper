@@ -1,10 +1,10 @@
 use crate::models::{Item, Priority, Status};
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use rusqlite::types::Value;
-use std::path::Path;
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use std::fs;
+use std::path::Path;
 
 const MIGRATION_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS items (
@@ -74,7 +74,13 @@ impl Db {
             self.conn
                 .query_row(
                     &dup_sql,
-                    (bucket, content, priority.as_str(), Status::Open.as_str(), due),
+                    (
+                        bucket,
+                        content,
+                        priority.as_str(),
+                        Status::Open.as_str(),
+                        due,
+                    ),
                     |row| row.get(0),
                 )
                 .optional()?
@@ -202,8 +208,7 @@ impl Db {
         }
         if notes_only {
             conditions.push(
-                "(due_date IS NULL OR trim(due_date) = '' OR length(due_date) != 10)"
-                    .to_string(),
+                "(due_date IS NULL OR trim(due_date) = '' OR length(due_date) != 10)".to_string(),
             );
         } else if !include_notes {
             conditions.push(
@@ -228,8 +233,8 @@ impl Db {
 
             let priority = Priority::from_str(&priority_str).unwrap_or(Priority::None);
             let status = Status::from_str(&status_str).unwrap_or(Status::Open);
-            let due_date = due_date_str
-                .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
+            let due_date =
+                due_date_str.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());

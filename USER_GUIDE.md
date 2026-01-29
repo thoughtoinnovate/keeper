@@ -88,6 +88,8 @@ You must enter the **current password** and then set a new one.
   - `--all` includes notes
   - `--notes` shows only notes
 - `keeper mark <id> <open|done|deleted>`
+- `keeper update` — update the keeper binary to the latest release
+- `keeper update --tag v0.2.0` — update to a specific release tag
 - `keeper update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]`
 
 ### Archive and Undo
@@ -164,6 +166,12 @@ Update a task by id:
 keeper update 42 "!p2 ^2026-02-15"
 keeper update 42 "New content @work"
 keeper update 42 "^clear"
+```
+
+Update keeper itself:
+```bash
+keeper update
+keeper update --tag v0.2.0
 ```
 
 ## Duplicate Handling

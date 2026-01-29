@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use anyhow::{Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use bip39::{Language, Mnemonic};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
     Key, XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit},
 };
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -158,8 +158,7 @@ impl Keystore {
         OsRng.fill_bytes(&mut salt_password);
         OsRng.fill_bytes(&mut nonce_password);
 
-        let mut wrapped =
-            wrap_master_key(password, &salt_password, &nonce_password, master_key)?;
+        let mut wrapped = wrap_master_key(password, &salt_password, &nonce_password, master_key)?;
 
         self.salt_password = STANDARD_NO_PAD.encode(salt_password);
         self.nonce_password = STANDARD_NO_PAD.encode(nonce_password);
@@ -224,5 +223,8 @@ fn decode_fixed(encoded: &str, expected_len: usize, label: &str) -> Result<Vec<u
 }
 
 fn normalize_recovery_code(code: &str) -> String {
-    code.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    code.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }

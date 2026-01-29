@@ -26,7 +26,10 @@ pub enum Commands {
     Recover(RecoverArgs),
     Note(NoteArgs),
     Get(GetArgs),
-    Mark { id: i64, status: String },
+    Mark {
+        id: i64,
+        status: String,
+    },
     Update(UpdateArgs),
     Dash(DashArgs),
     Keystore(KeystoreArgs),
@@ -75,9 +78,17 @@ pub struct UndoArgs {
 
 #[derive(Args)]
 pub struct UpdateArgs {
-    pub id: i64,
+    pub id: Option<i64>,
     #[arg(trailing_var_arg = true)]
     pub content: Vec<String>,
+    #[arg(
+        long,
+        value_name = "TAG",
+        help = "Update keeper to a specific release tag (e.g. v0.2.0)"
+    )]
+    pub tag: Option<String>,
+    #[arg(long = "self", help = "Update the keeper binary itself")]
+    pub self_update: bool,
 }
 
 #[derive(Args)]
@@ -94,6 +105,7 @@ pub struct DashArgs {
 
 #[derive(Subcommand)]
 pub enum DashCommands {
+    #[command(name = "due_timeline", alias = "due-timeline")]
     DueTimeline {
         #[arg(long)]
         mermaid: bool,

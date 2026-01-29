@@ -57,6 +57,7 @@ fi
 
 ASSET_NAME="${BIN_NAME}-${FULL_TARGET}.${ASSET_EXT}"
 DOWNLOAD_URL="${REPO_URL}/releases/latest/download/${ASSET_NAME}"
+CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
 
 log_info "Detected system: $OS ($ARCH)"
 log_info "Targeting release asset: $ASSET_NAME"
@@ -80,6 +81,37 @@ log_info "Downloading latest release..."
 if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET_NAME"; then
     log_error "Download failed. Check connection or if release exists: $DOWNLOAD_URL"
 fi
+
+log_info "Downloading checksum..."
+if ! curl -fsSL "$CHECKSUM_URL" -o "$TMP_DIR/$ASSET_NAME.sha256"; then
+    log_error "Checksum download failed. Check connection or if release exists: $CHECKSUM_URL"
+fi
+
+calc_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+        return
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+        return
+    fi
+    if command -v certutil >/dev/null 2>&1; then
+        certutil -hashfile "$1" SHA256 | sed -n '2p' | tr -d '\r'
+        return
+    fi
+    log_error "No SHA-256 tool found (sha256sum, shasum, or certutil required)."
+}
+
+EXPECTED_HASH=$(awk '{print tolower($1)}' "$TMP_DIR/$ASSET_NAME.sha256" | tr -d '\r')
+ACTUAL_HASH=$(calc_sha256 "$TMP_DIR/$ASSET_NAME" | tr '[:upper:]' '[:lower:]')
+if [ -z "$EXPECTED_HASH" ] || [ -z "$ACTUAL_HASH" ]; then
+    log_error "Checksum verification failed (empty hash)."
+fi
+if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+    log_error "Checksum mismatch. Expected $EXPECTED_HASH, got $ACTUAL_HASH"
+fi
+log_success "Checksum verified"
 
 log_info "Extracting..."
 if [ "$IS_WINDOWS" -eq 1 ]; then

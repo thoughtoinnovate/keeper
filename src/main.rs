@@ -5,17 +5,18 @@ mod db;
 mod formatting;
 mod ipc;
 mod keystore;
-mod timeline;
 mod logger;
 mod models;
 mod paths;
 mod prompt;
 mod security;
+mod self_update;
 mod session;
 mod sigil;
+mod timeline;
 mod tui;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use clap::Parser;
 use std::io;
@@ -156,7 +157,10 @@ fn cmd_get(paths: &KeeperPaths, args: cli::GetArgs) -> Result<()> {
 
 fn cmd_mark(paths: &KeeperPaths, id: i64, status: String) -> Result<()> {
     let status = daemon::parse_status(&status).ok_or_else(|| anyhow!("Invalid status"))?;
-    let request = DaemonRequest::UpdateStatus { id, new_status: status };
+    let request = DaemonRequest::UpdateStatus {
+        id,
+        new_status: status,
+    };
     let response = client::send_request(paths, &request)?;
     match response {
         DaemonResponse::OkMessage(msg) => println!("{msg}"),
@@ -167,6 +171,27 @@ fn cmd_mark(paths: &KeeperPaths, id: i64, status: String) -> Result<()> {
 }
 
 fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
+    if args.self_update || args.id.is_none() {
+        if args.id.is_some() {
+            return Err(anyhow!("Self-update does not take an id"));
+        }
+        if !args.content.is_empty() {
+            return Err(anyhow!(
+                "Self-update does not take item content. Run `keeper update <id> <content...>` to update an item."
+            ));
+        }
+        return self_update::run_self_update(self_update::SelfUpdateOptions { tag: args.tag });
+    }
+
+    if args.tag.is_some() {
+        return Err(anyhow!(
+            "Release tags are only valid for self-update. Run `keeper update --self --tag <tag>`."
+        ));
+    }
+
+    let id = args
+        .id
+        .ok_or_else(|| anyhow!("Provide an id or use --self to update keeper"))?;
     let spec = sigil::parse_update_args(&args)?;
     if spec.content.is_none()
         && spec.bucket.is_none()
@@ -181,7 +206,7 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
         }
     }
     let request = DaemonRequest::UpdateItem {
-        id: args.id,
+        id,
         bucket: spec.bucket,
         content: spec.content,
         priority: spec.priority,
@@ -213,7 +238,9 @@ fn cmd_delete(paths: &KeeperPaths, args: cli::DeleteArgs) -> Result<()> {
         return Ok(());
     }
 
-    let id = args.id.ok_or_else(|| anyhow!("Provide an id or use --all"))?;
+    let id = args
+        .id
+        .ok_or_else(|| anyhow!("Provide an id or use --all"))?;
     let request = DaemonRequest::UpdateStatus {
         id,
         new_status: models::Status::Deleted,
@@ -332,9 +359,13 @@ fn cmd_daemon(paths: &KeeperPaths) -> Result<()> {
     {
         let mut d = daemonize::Daemonize::new();
         if logger::is_debug() {
-            d = d.stdout(daemonize::Stdio::keep()).stderr(daemonize::Stdio::keep());
+            d = d
+                .stdout(daemonize::Stdio::keep())
+                .stderr(daemonize::Stdio::keep());
         } else {
-            d = d.stdout(daemonize::Stdio::devnull()).stderr(daemonize::Stdio::devnull());
+            d = d
+                .stdout(daemonize::Stdio::devnull())
+                .stderr(daemonize::Stdio::devnull());
         }
         d.start().context("Failed to daemonize")?;
     }

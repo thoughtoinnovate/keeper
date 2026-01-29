@@ -3,7 +3,7 @@ use crate::logger;
 use crate::paths::KeeperPaths;
 use crate::{client, prompt, security};
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::Zeroize;
@@ -70,11 +70,7 @@ pub fn start_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Resu
     Ok(child.id())
 }
 
-pub fn ensure_daemon(
-    paths: &KeeperPaths,
-    master_key: &[u8],
-    debug: bool,
-) -> Result<Option<u32>> {
+pub fn ensure_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Result<Option<u32>> {
     if client::daemon_running(paths) {
         return Ok(None);
     }

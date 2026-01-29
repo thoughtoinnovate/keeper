@@ -1,9 +1,9 @@
-use anyhow::Result;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use chrono::{NaiveDate, Local};
 use crate::models::{Item, Priority};
-use flate2::write::ZlibEncoder;
+use anyhow::Result;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use chrono::{Local, NaiveDate};
 use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use serde::Serialize;
 use std::io::Write;
 
@@ -11,9 +11,7 @@ pub fn build_mermaid_due_timeline(items: &[Item], cutoff: NaiveDate) -> Result<S
     let today = Local::now().date_naive();
     let mut lines = Vec::new();
     lines.push("timeline".to_string());
-    lines.push(format!(
-        "    title Due Timeline ({today} to {cutoff})"
-    ));
+    lines.push(format!("    title Due Timeline ({today} to {cutoff})"));
 
     let mut sorted: Vec<&Item> = items.iter().collect();
     sorted.sort_by(|a, b| a.due_date.cmp(&b.due_date).then(a.id.cmp(&b.id)));

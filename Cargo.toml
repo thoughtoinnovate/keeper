@@ -1,6 +1,6 @@
 [package]
 name = "keeper"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -23,6 +23,7 @@ rand = "0.8"
 base64 = "0.22"
 flate2 = "1.0"
 bip39 = { version = "2.0", features = ["rand"] }
+sha2 = "0.10"
 # Time & Serialization
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

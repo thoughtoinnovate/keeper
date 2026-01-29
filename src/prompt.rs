@@ -1,5 +1,5 @@
 use crate::logger;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::io::{self, IsTerminal, Write};
 use std::process::{Command, Stdio};
 
