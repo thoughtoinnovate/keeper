@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::tempdir;
 
@@ -7,8 +7,7 @@ fn test_quick_capture_flow() {
     let temp = tempdir().unwrap();
     let home = temp.path();
 
-    Command::cargo_bin("keeper")
-        .unwrap()
+    cargo_bin_cmd!("keeper")
         .env("HOME", home)
         .arg("start")
         .write_stdin("pass\npass\n")
@@ -17,8 +16,7 @@ fn test_quick_capture_flow() {
 
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    Command::cargo_bin("keeper")
-        .unwrap()
+    cargo_bin_cmd!("keeper")
         .env("HOME", home)
         .arg("note")
         .arg("test task")
@@ -29,8 +27,7 @@ fn test_quick_capture_flow() {
         .success()
         .stdout(predicate::str::contains("[✓] Saved"));
 
-    let assert = Command::cargo_bin("keeper")
-        .unwrap()
+    let assert = cargo_bin_cmd!("keeper")
         .env("HOME", home)
         .arg("get")
         .arg("@test")
@@ -40,8 +37,7 @@ fn test_quick_capture_flow() {
     let output = std::str::from_utf8(&assert.get_output().stdout).unwrap();
     insta::assert_snapshot!(output);
 
-    Command::cargo_bin("keeper")
-        .unwrap()
+    cargo_bin_cmd!("keeper")
         .env("HOME", home)
         .arg("stop")
         .assert()

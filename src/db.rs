@@ -35,7 +35,7 @@ pub enum InsertOutcome {
 impl Db {
     pub fn open(path: &Path, key: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.pragma_update(None, "key", &key)?;
+        conn.pragma_update(None, "key", key)?;
         conn.execute_batch(MIGRATION_SQL)?;
         #[cfg(unix)]
         {

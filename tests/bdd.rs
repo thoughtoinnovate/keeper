@@ -1,4 +1,3 @@
-use assert_cmd::cargo::cargo_bin;
 use cucumber::{World, given, then, when};
 use futures::FutureExt as _;
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ impl KeeperWorld {
     }
 
     fn run_keeper(&mut self, args: &[&str], stdin: Option<&str>) -> bool {
-        let bin = cargo_bin("keeper");
+        let bin = assert_cmd::cargo::cargo_bin!("keeper");
         let mut cmd = Command::new(bin);
         cmd.env("HOME", self.home.path());
         cmd.current_dir(&self.cwd);

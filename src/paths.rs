@@ -6,7 +6,6 @@ pub struct KeeperPaths {
     pub base_dir: PathBuf,
     pub db_path: PathBuf,
     pub socket_path: PathBuf,
-    pub pid_path: PathBuf,
     pub keystore_path: PathBuf,
     pub vault_arg: Option<PathBuf>,
 }
@@ -42,7 +41,6 @@ impl KeeperPaths {
         Ok(Self {
             db_path,
             socket_path: base_dir.join("keeper.sock"),
-            pid_path: base_dir.join("keeper.pid"),
             keystore_path: base_dir.join("keystore.json"),
             base_dir,
             vault_arg,
@@ -83,10 +81,6 @@ impl KeeperPaths {
             std::fs::set_permissions(&self.socket_path, perms)?;
         }
         Ok(())
-    }
-
-    pub fn db_dir(&self) -> &Path {
-        &self.base_dir
     }
 
     pub fn keystore_path(&self) -> &Path {

@@ -200,10 +200,10 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
     {
         return Err(anyhow!("No updates provided"));
     }
-    if let Some(ref content) = spec.content {
-        if content.trim().is_empty() {
-            return Err(anyhow!("Note content cannot be empty"));
-        }
+    if let Some(ref content) = spec.content
+        && content.trim().is_empty()
+    {
+        return Err(anyhow!("Note content cannot be empty"));
     }
     let request = DaemonRequest::UpdateItem {
         id,

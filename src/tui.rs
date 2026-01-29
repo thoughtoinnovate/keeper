@@ -93,10 +93,10 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
                 if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
                     break;
                 }
-                if !trimmed.is_empty() {
-                    if let Err(err) = handle_repl_command(paths, trimmed, debug, &buckets) {
-                        eprintln!("{err}");
-                    }
+                if !trimmed.is_empty()
+                    && let Err(err) = handle_repl_command(paths, trimmed, debug, &buckets)
+                {
+                    eprintln!("{err}");
                 }
             }
             Ok(Signal::CtrlC) | Ok(Signal::CtrlD) => break,
@@ -579,10 +579,10 @@ impl Hinter for CommandHinter {
         let has_space = trimmed.contains(' ') || trimmed.contains('\t');
 
         if !has_space && !is_first_complete {
-            if let Some(cmd) = self.commands.iter().filter(|c| c.starts_with(first)).min() {
-                if cmd.len() > first.len() {
-                    self.current_hint = cmd[first.len()..].to_string();
-                }
+            if let Some(cmd) = self.commands.iter().filter(|c| c.starts_with(first)).min()
+                && cmd.len() > first.len()
+            {
+                self.current_hint = cmd[first.len()..].to_string();
             }
         } else if is_first_complete {
             if first == "help" && tokens.len() == 2 && !line.ends_with(' ') {
@@ -592,10 +592,9 @@ impl Hinter for CommandHinter {
                     .iter()
                     .filter(|t| t.starts_with(partial))
                     .min()
+                    && topic.len() > partial.len()
                 {
-                    if topic.len() > partial.len() {
-                        self.current_hint = topic[partial.len()..].to_string();
-                    }
+                    self.current_hint = topic[partial.len()..].to_string();
                 }
             } else {
                 self.current_hint = template_for_command(first, &tokens, line);
@@ -998,7 +997,6 @@ fn suggest_from_candidates(
 struct Token {
     text: String,
     start: usize,
-    end: usize,
 }
 
 fn tokenize_with_spans(input: &str) -> Vec<Token> {
@@ -1007,10 +1005,7 @@ fn tokenize_with_spans(input: &str) -> Vec<Token> {
     let mut start = 0usize;
     let mut in_quotes: Option<char> = None;
     let mut escaped = false;
-    let mut last_index = 0usize;
-
     for (idx, ch) in input.char_indices() {
-        last_index = idx + ch.len_utf8();
         if escaped {
             current.push(ch);
             escaped = false;
@@ -1034,7 +1029,6 @@ fn tokenize_with_spans(input: &str) -> Vec<Token> {
                         tokens.push(Token {
                             text: current.clone(),
                             start,
-                            end: idx,
                         });
                         current.clear();
                     }
@@ -1058,7 +1052,6 @@ fn tokenize_with_spans(input: &str) -> Vec<Token> {
         tokens.push(Token {
             text: current,
             start,
-            end: last_index,
         });
     }
     tokens
@@ -1066,7 +1059,7 @@ fn tokenize_with_spans(input: &str) -> Vec<Token> {
 
 fn build_repl_commands() -> Vec<String> {
     let mut cmds = Vec::new();
-    let mut root = crate::cli::Cli::command();
+    let root = crate::cli::Cli::command();
     for sub in root.get_subcommands() {
         if sub.is_hide_set() {
             continue;
@@ -1288,14 +1281,14 @@ fn fetch_overdue_counts(paths: &KeeperPaths) -> Result<(usize, usize, usize, usi
     let mut none = 0usize;
 
     for item in items {
-        if let Some(due) = item.due_date {
-            if due < today {
-                match item.priority {
-                    Priority::P1_Urgent => p1 += 1,
-                    Priority::P2_Important => p2 += 1,
-                    Priority::P3_Task => p3 += 1,
-                    Priority::None => none += 1,
-                }
+        if let Some(due) = item.due_date
+            && due < today
+        {
+            match item.priority {
+                Priority::P1_Urgent => p1 += 1,
+                Priority::P2_Important => p2 += 1,
+                Priority::P3_Task => p3 += 1,
+                Priority::None => none += 1,
             }
         }
     }

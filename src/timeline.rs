@@ -107,7 +107,7 @@ pub fn format_terminal_hyperlink(label: &str, url: &str) -> String {
 fn format_label(item: &Item) -> String {
     let mut label = String::new();
     label.push('[');
-    label.push_str(&format_priority(&item.priority));
+    label.push_str(format_priority(&item.priority));
     label.push_str("] ");
     label.push_str(&sanitize_label(&item.content));
     label.push_str(" (");

@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone, Copy)]
 pub enum Priority {
     P1_Urgent,    // !p1

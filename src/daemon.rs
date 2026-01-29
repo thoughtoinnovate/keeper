@@ -1,11 +1,11 @@
 use crate::db::{Db, InsertOutcome};
 use crate::ipc::{DaemonRequest, DaemonResponse};
 use crate::keystore::Keystore;
-use crate::models::{Priority, Status};
+use crate::models::Status;
 use crate::paths::KeeperPaths;
 use crate::{logger, security};
 use anyhow::Result;
-use chrono::{NaiveDate, Utc};
+use chrono::Utc;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
@@ -29,10 +29,10 @@ pub fn run_daemon(
         }
     };
     db_key.zeroize();
-    if let Ok(count) = db.purge_archived_before(Utc::now() - chrono::Duration::days(1)) {
-        if count > 0 {
-            logger::debug(&format!("Purged {count} archived items"));
-        }
+    if let Ok(count) = db.purge_archived_before(Utc::now() - chrono::Duration::days(1))
+        && count > 0
+    {
+        logger::debug(&format!("Purged {count} archived items"));
     }
 
     let listener = match UnixListener::bind(&paths.socket_path) {
@@ -246,18 +246,4 @@ pub fn parse_status(value: &str) -> Option<Status> {
         "deleted" => Some(Status::Deleted),
         _ => None,
     }
-}
-
-pub fn parse_priority(value: &str) -> Option<Priority> {
-    match value.to_lowercase().as_str() {
-        "p1" | "!p1" => Some(Priority::P1_Urgent),
-        "p2" | "!p2" => Some(Priority::P2_Important),
-        "p3" | "!p3" => Some(Priority::P3_Task),
-        "none" => Some(Priority::None),
-        _ => None,
-    }
-}
-
-pub fn parse_date_filter(value: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()
 }
