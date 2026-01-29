@@ -126,19 +126,45 @@ fn handle_connection(
             Ok(false) => DaemonResponse::Error("Item not found".to_string()),
             Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
         },
-        DaemonRequest::RotatePassword { password } => {
-            let mut password = password;
+        DaemonRequest::RotatePassword {
+            current_password,
+            new_password,
+        } => {
+            let mut current_password = current_password;
+            let mut new_password = new_password;
             let response = match Keystore::load(paths.keystore_path()) {
-                Ok(mut keystore) => match keystore.rewrap_password(&password, master_key) {
-                    Ok(()) => match keystore.save(paths.keystore_path()) {
-                        Ok(()) => DaemonResponse::OkMessage("Password updated".to_string()),
-                        Err(err) => DaemonResponse::Error(format!("Failed to save keystore: {err}")),
-                    },
-                    Err(err) => DaemonResponse::Error(format!("Failed to update password: {err}")),
+                Ok(mut keystore) => match keystore.unwrap_with_password(&current_password) {
+                    Ok(mut unwrapped) => {
+                        if &unwrapped != master_key {
+                            unwrapped.zeroize();
+                            DaemonResponse::Error(
+                                "Current password does not match active vault".to_string(),
+                            )
+                        } else {
+                            unwrapped.zeroize();
+                            match keystore.rewrap_password(&new_password, master_key) {
+                                Ok(()) => match keystore.save(paths.keystore_path()) {
+                                    Ok(()) => {
+                                        DaemonResponse::OkMessage("Password updated".to_string())
+                                    }
+                                    Err(err) => {
+                                        DaemonResponse::Error(format!(
+                                            "Failed to save keystore: {err}"
+                                        ))
+                                    }
+                                },
+                                Err(err) => {
+                                    DaemonResponse::Error(format!("Failed to update password: {err}"))
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => DaemonResponse::Error("Invalid current password".to_string()),
                 },
                 Err(err) => DaemonResponse::Error(format!("Failed to load keystore: {err}")),
             };
-            password.zeroize();
+            current_password.zeroize();
+            new_password.zeroize();
             response
         }
         DaemonRequest::GetDashboardStats => match db.stats() {

@@ -7,6 +7,10 @@ pub fn prompt_password() -> Result<String> {
     prompt_secret("🔒 Enter Keeper Vault Password: ")
 }
 
+pub fn prompt_current_password() -> Result<String> {
+    prompt_secret("🔒 Current Keeper Vault Password: ")
+}
+
 pub fn prompt_password_confirm() -> Result<String> {
     let first = prompt_secret("🔒 Create Keeper Vault Password: ")?;
     let second = prompt_secret("🔒 Confirm Keeper Vault Password: ")?;

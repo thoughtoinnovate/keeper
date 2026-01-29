@@ -19,7 +19,10 @@ pub enum DaemonRequest {
         notes_only: bool,
     },
     UpdateStatus { id: i64, new_status: Status },
-    RotatePassword { password: String },
+    RotatePassword {
+        current_password: String,
+        new_password: String,
+    },
     GetDashboardStats,
     ArchiveAll,
     Undo { id: Option<i64> },

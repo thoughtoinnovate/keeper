@@ -227,11 +227,17 @@ fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
         return Err(anyhow!("Daemon not running. Start the vault first."));
     }
     let mut request = DaemonRequest::RotatePassword {
-        password: prompt::prompt_password_confirm()?,
+        current_password: prompt::prompt_current_password()?,
+        new_password: prompt::prompt_password_confirm()?,
     };
     let response = client::send_request(paths, &request)?;
-    if let DaemonRequest::RotatePassword { password } = &mut request {
-        password.zeroize();
+    if let DaemonRequest::RotatePassword {
+        current_password,
+        new_password,
+    } = &mut request
+    {
+        current_password.zeroize();
+        new_password.zeroize();
     }
     match response {
         DaemonResponse::OkMessage(msg) => println!("{msg}"),
