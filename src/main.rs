@@ -55,7 +55,11 @@ fn run() -> Result<()> {
 
 fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
     if client::daemon_running(paths) {
-        println!("✅ Daemon already running. Socket: {}", paths.socket_path_display());
+        println!(
+            "✅ Daemon already running. Vault: {}. Socket: {}",
+            paths.db_path.display(),
+            paths.socket_path_display()
+        );
         return Ok(());
     }
 
@@ -72,7 +76,8 @@ fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
     }
 
     println!(
-        "✅ Daemon started. PID: {}. Socket: {}",
+        "✅ Daemon started. Vault: {}. PID: {}. Socket: {}",
+        paths.db_path.display(),
         pid,
         paths.socket_path_display()
     );

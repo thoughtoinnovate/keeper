@@ -44,6 +44,7 @@ pub fn run_repl(paths: &KeeperPaths, debug: bool) -> Result<()> {
             return Err(anyhow::anyhow!("Daemon failed to start"));
         }
     }
+    println!("Vault: {}", paths.db_path.display());
     render_dashboard(paths)?;
 
     let base_commands: Vec<String> = vec![
@@ -152,7 +153,11 @@ fn handle_repl_command(
         }
         "start" => {
             if client::daemon_running(paths) {
-                println!("✅ Daemon already running. Socket: {}", paths.socket_path_display());
+                println!(
+                    "✅ Daemon already running. Vault: {}. Socket: {}",
+                    paths.db_path.display(),
+                    paths.socket_path_display()
+                );
                 return Ok(());
             }
             let outcome = session::unlock_or_init_master_key(paths)?;
@@ -163,7 +168,8 @@ fn handle_repl_command(
             let mut master_key = outcome.master_key;
             master_key.zeroize();
             println!(
-                "✅ Daemon started. PID: {}. Socket: {}",
+                "✅ Daemon started. Vault: {}. PID: {}. Socket: {}",
+                paths.db_path.display(),
                 pid,
                 paths.socket_path_display()
             );
