@@ -45,6 +45,13 @@ impl Keystore {
         }
         let data = serde_json::to_string_pretty(self)?;
         fs::write(path, data)?;
+        #[cfg(unix)]
+        {
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            let perms = Permissions::from_mode(0o600);
+            fs::set_permissions(path, perms)?;
+        }
         Ok(())
     }
 

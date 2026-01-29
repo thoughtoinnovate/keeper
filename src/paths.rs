@@ -57,6 +57,13 @@ impl KeeperPaths {
 
     pub fn ensure_base_dir(&self) -> Result<()> {
         std::fs::create_dir_all(&self.base_dir)?;
+        #[cfg(unix)]
+        {
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            let perms = Permissions::from_mode(0o700);
+            std::fs::set_permissions(&self.base_dir, perms)?;
+        }
         Ok(())
     }
 

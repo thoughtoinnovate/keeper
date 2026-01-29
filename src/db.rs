@@ -4,6 +4,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use rusqlite::types::Value;
 use std::path::Path;
+use std::fs;
 
 const MIGRATION_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS items (
@@ -36,6 +37,13 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "key", &key)?;
         conn.execute_batch(MIGRATION_SQL)?;
+        #[cfg(unix)]
+        {
+            use std::fs::Permissions;
+            use std::os::unix::fs::PermissionsExt;
+            let perms = Permissions::from_mode(0o600);
+            fs::set_permissions(path, perms)?;
+        }
         Ok(Self { conn })
     }
 
