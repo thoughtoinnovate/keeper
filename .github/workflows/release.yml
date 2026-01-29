@@ -37,6 +37,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.config.target }}
+      - name: Install OpenSSL (Windows)
+        if: startsWith(matrix.config.os, 'windows')
+        shell: pwsh
+        run: |
+          $triplet = if ("${{ matrix.config.target }}" -eq "aarch64-pc-windows-msvc") { "arm64-windows" } else { "x64-windows" }
+          if (!(Test-Path "C:\vcpkg")) {
+            git clone https://github.com/microsoft/vcpkg C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+          }
+          C:\vcpkg\vcpkg.exe install "openssl:$triplet"
+          "OPENSSL_DIR=C:\vcpkg\installed\$triplet" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_LIB_DIR=C:\vcpkg\installed\$triplet\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\$triplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Build and Upload Asset
         uses: taiki-e/upload-rust-binary-action@v1
         with:
