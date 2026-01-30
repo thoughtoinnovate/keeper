@@ -20,20 +20,21 @@ pub fn run_self_update(opts: SelfUpdateOptions) -> Result<()> {
     let target = detect_target()?;
     let asset_name = format!("{}-{}.{}", BIN_NAME, target.full_target, target.asset_ext);
 
-    let download_url = match opts.tag {
-        Some(tag) => {
-            let tag = normalize_tag(&tag);
-            format!("{REPO_URL}/releases/download/{tag}/{asset_name}")
-        }
+    let normalized_tag = opts.tag.as_deref().map(normalize_tag);
+    let download_url = match normalized_tag.as_deref() {
+        Some(tag) => format!("{REPO_URL}/releases/download/{tag}/{asset_name}"),
         None => format!("{REPO_URL}/releases/latest/download/{asset_name}"),
+    };
+    let checksum_name = format!("{}-{}.sha256", BIN_NAME, target.full_target);
+    let checksum_url = match normalized_tag.as_deref() {
+        Some(tag) => format!("{REPO_URL}/releases/download/{tag}/{checksum_name}"),
+        None => format!("{REPO_URL}/releases/latest/download/{checksum_name}"),
     };
 
     ensure_prereqs(target.is_windows)?;
 
     let tmp_dir = TempDir::new()?;
     let asset_path = tmp_dir.path.join(&asset_name);
-
-    let checksum_url = format!("{download_url}.sha256");
 
     log_info(&format!("Downloading {download_url}"));
     run_cmd(
@@ -42,7 +43,7 @@ pub fn run_self_update(opts: SelfUpdateOptions) -> Result<()> {
     )
     .context("Download failed")?;
 
-    let checksum_path = tmp_dir.path.join(format!("{asset_name}.sha256"));
+    let checksum_path = tmp_dir.path.join(&checksum_name);
     log_info(&format!("Downloading checksum {checksum_url}"));
     run_cmd(
         "curl",

@@ -57,7 +57,8 @@ fi
 
 ASSET_NAME="${BIN_NAME}-${FULL_TARGET}.${ASSET_EXT}"
 DOWNLOAD_URL="${REPO_URL}/releases/latest/download/${ASSET_NAME}"
-CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
+CHECKSUM_NAME="${BIN_NAME}-${FULL_TARGET}.sha256"
+CHECKSUM_URL="${REPO_URL}/releases/latest/download/${CHECKSUM_NAME}"
 
 log_info "Detected system: $OS ($ARCH)"
 log_info "Targeting release asset: $ASSET_NAME"
