@@ -2,10 +2,11 @@ use crate::client::{self, send_request};
 use crate::ipc::DaemonRequest;
 use crate::models::{Item, Priority, Status};
 use crate::paths::KeeperPaths;
+use crate::transfer;
 use crate::{logger, prompt, session, timeline};
 use anyhow::Result;
 use chrono::{Duration, Local};
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use reedline::{
     ColumnarMenu, Completer, DefaultPrompt, DefaultPromptSegment, Emacs, Hinter, History, KeyCode,
     KeyModifiers, Reedline, ReedlineEvent, ReedlineMenu, Signal, Span, Suggestion,
@@ -217,6 +218,36 @@ fn handle_repl_command(
                 }
                 crate::ipc::DaemonResponse::Error(err) => eprintln!("{err}"),
                 _ => println!("[✓] Saved"),
+            }
+            Ok(())
+        }
+        "export" => {
+            let mut args = vec!["keeper".to_string(), "export".to_string()];
+            args.extend(tokens[1..].to_vec());
+            match crate::cli::Cli::try_parse_from(args) {
+                Ok(cli) => {
+                    if let Some(crate::cli::Commands::Export(export_args)) = cli.command
+                        && let Err(err) = transfer::run_export(paths, export_args)
+                    {
+                        eprintln!("{err}");
+                    }
+                }
+                Err(err) => eprintln!("{err}"),
+            }
+            Ok(())
+        }
+        "import" => {
+            let mut args = vec!["keeper".to_string(), "import".to_string()];
+            args.extend(tokens[1..].to_vec());
+            match crate::cli::Cli::try_parse_from(args) {
+                Ok(cli) => {
+                    if let Some(crate::cli::Commands::Import(import_args)) = cli.command
+                        && let Err(err) = transfer::run_import(paths, import_args)
+                    {
+                        eprintln!("{err}");
+                    }
+                }
+                Err(err) => eprintln!("{err}"),
             }
             Ok(())
         }
