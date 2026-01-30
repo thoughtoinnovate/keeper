@@ -27,17 +27,11 @@ pub fn build_mermaid_due_timeline(
     );
     lines.push("timeline".to_string());
     lines.push("    title 🗓️ Tasks Timeline".to_string());
-    lines.push("classDef p1 fill:#fecaca,stroke:#ef4444,color:#111827;".to_string());
-    lines.push("classDef p2 fill:#fef3c7,stroke:#f59e0b,color:#111827;".to_string());
-    lines.push("classDef p3 fill:#dcfce7,stroke:#22c55e,color:#111827;".to_string());
-    lines.push("classDef none fill:#e5e7eb,stroke:#9ca3af,color:#111827;".to_string());
-    lines.push("classDef today fill:#dbeafe,stroke:#3b82f6,color:#111827;".to_string());
-
     lines.push("    section ⚠️ Overdue".to_string());
-    lines.push(format!("    P1: {} :::p1", overdue.p1));
-    lines.push(format!("    P2: {} :::p2", overdue.p2));
-    lines.push(format!("    P3: {} :::p3", overdue.p3));
-    lines.push(format!("    notes: {} :::none", overdue.notes));
+    lines.push(format!("    P1: {}", overdue.p1));
+    lines.push(format!("    P2: {}", overdue.p2));
+    lines.push(format!("    P3: {}", overdue.p3));
+    lines.push(format!("    notes: {}", overdue.notes));
 
     lines.push(format!("    section 📍 TODAY( {today})"));
     append_section_items(&mut lines, items, Some(today));
@@ -80,12 +74,10 @@ pub fn mermaid_timeline_to_ascii(code: &str) -> String {
             continue;
         }
         if let Some((date, text)) = trimmed.split_once(" : ") {
-            let clean_text = text.split(" :::").next().unwrap_or(text).trim();
-            entries.push((date.trim().to_string(), clean_text.to_string()));
+            entries.push((date.trim().to_string(), text.trim().to_string()));
         }
         if let Some((label, text)) = trimmed.split_once(':') {
-            let clean_text = text.split(" :::").next().unwrap_or(text).trim();
-            entries.push((label.trim().to_string(), clean_text.to_string()));
+            entries.push((label.trim().to_string(), text.trim().to_string()));
         }
     }
 
@@ -173,16 +165,10 @@ fn append_priority_group(
     for item in items.iter().filter(|item| item.priority == priority) {
         let entry = format_entry(item);
         if first {
-            lines.push(format!(
-                "    {label} : {entry} :::{}",
-                priority_class(&priority)
-            ));
+            lines.push(format!("    {label} : {entry}"));
             first = false;
         } else {
-            lines.push(format!(
-                "          : {entry} :::{}",
-                priority_class(&priority)
-            ));
+            lines.push(format!("          : {entry}"));
         }
     }
 }
@@ -201,15 +187,6 @@ fn split_bucket(bucket: &str) -> (String, String) {
         return (workspace.to_string(), bucket_name.to_string());
     }
     ("default".to_string(), trimmed.to_string())
-}
-
-fn priority_class(priority: &Priority) -> &'static str {
-    match priority {
-        Priority::P1_Urgent => "p1",
-        Priority::P2_Important => "p2",
-        Priority::P3_Task => "p3",
-        Priority::None => "none",
-    }
 }
 
 fn priority_rank(priority: Priority) -> u8 {
@@ -257,9 +234,8 @@ mod tests {
             cutoff,
         )
         .unwrap();
-        assert!(code.contains("classDef p1"));
-        assert!(code.contains(":::p1"));
         assert!(code.contains("section ⚠️ Overdue"));
         assert!(code.contains("section 📍 TODAY"));
+        assert!(code.contains("P1: 0"));
     }
 }
