@@ -97,12 +97,12 @@ pub fn normalize_bucket_filter(input: &str) -> Result<String> {
     if trimmed == "@" {
         return Err(anyhow!("Workspace is required"));
     }
-    if let Some((workspace, bucket)) = trimmed.split_once('/') {
-        if workspace.len() <= 1 || bucket.is_empty() {
-            return Err(anyhow!(
-                "Bucket must include workspace and bucket (e.g. @default/inbox)"
-            ));
-        }
+    if let Some((workspace, bucket)) = trimmed.split_once('/')
+        && (workspace.len() <= 1 || bucket.is_empty())
+    {
+        return Err(anyhow!(
+            "Bucket must include workspace and bucket (e.g. @default/inbox)"
+        ));
     }
     Ok(trimmed.to_string())
 }
