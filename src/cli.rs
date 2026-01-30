@@ -2,7 +2,11 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "keeper", about = "Encrypted second brain terminal tool.")]
+#[command(
+    name = "keeper",
+    about = "Encrypted second brain terminal tool.",
+    version
+)]
 pub struct Cli {
     #[arg(long, global = true, help = "Enable debug logging")]
     pub debug: bool,
