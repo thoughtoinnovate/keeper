@@ -14,6 +14,7 @@ pub struct UnlockOutcome {
 }
 
 pub fn unlock_or_init_master_key(paths: &KeeperPaths) -> Result<UnlockOutcome> {
+    paths.ensure_base_dir()?;
     if !paths.keystore_path().exists() {
         if paths.db_path.exists() {
             return Err(anyhow::anyhow!(

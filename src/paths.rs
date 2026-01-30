@@ -38,7 +38,6 @@ impl KeeperPaths {
             }
         };
 
-        std::fs::create_dir_all(&base_dir)?;
         Ok(Self {
             db_path,
             socket_path: base_dir.join("keeper.sock"),
@@ -57,6 +56,12 @@ impl KeeperPaths {
     }
 
     pub fn ensure_base_dir(&self) -> Result<()> {
+        if self.base_dir.exists() && !self.base_dir.is_dir() {
+            return Err(anyhow!(
+                "Vault base path {} exists and is not a directory. Move it or use --vault to choose a different location.",
+                self.base_dir.display()
+            ));
+        }
         std::fs::create_dir_all(&self.base_dir)?;
         #[cfg(unix)]
         {
