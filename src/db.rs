@@ -114,6 +114,37 @@ impl Db {
         Ok(InsertOutcome::Inserted(self.conn.last_insert_rowid()))
     }
 
+    pub fn upsert_item(&self, item: &Item) -> Result<()> {
+        let content = item.content.trim();
+        if content.is_empty() {
+            return Err(anyhow::anyhow!("Note content cannot be empty"));
+        }
+        let due_date_str = item.due_date.map(|d| d.format("%Y-%m-%d").to_string());
+        self.conn.execute(
+            "INSERT INTO items (id, bucket, content, priority, status, due_date, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+               bucket = excluded.bucket,
+               content = excluded.content,
+               priority = excluded.priority,
+               status = excluded.status,
+               due_date = excluded.due_date,
+               created_at = excluded.created_at,
+               updated_at = excluded.updated_at",
+            (
+                item.id,
+                item.bucket.trim(),
+                content,
+                item.priority.as_str(),
+                item.status.as_str(),
+                due_date_str,
+                item.created_at.to_rfc3339(),
+                item.updated_at.to_rfc3339(),
+            ),
+        )?;
+        Ok(())
+    }
+
     pub fn update_status(&self, id: i64, new_status: Status) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let updated = self.conn.execute(

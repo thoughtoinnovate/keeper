@@ -39,6 +39,9 @@ pub enum DaemonRequest {
     },
     GetDashboardStats,
     ArchiveAll,
+    ImportItems {
+        items: Vec<Item>,
+    },
     Undo {
         id: Option<i64>,
     },

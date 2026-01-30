@@ -102,6 +102,15 @@ You must enter the **current password** and then set a new one.
 - `keeper passwd` — change password (requires current password)
 - `keeper recover` — reset password using recovery code
 - `keeper keystore rebuild` — rebuild keystore while daemon is running (prints a new recovery code)
+- `keeper export --encrypted <file>` — export an encrypted vault bundle (requires a new export password)
+- `keeper import --encrypted <file>` — restore an encrypted vault bundle (daemon must be stopped)
+
+### Export / Import (JSON)
+Plain JSON export/import merges by id and updates content/priority/due dates.
+```bash
+keeper export --json keeper.json
+keeper import --json keeper.json
+```
 
 ### REPL / Dashboard
 Run `keeper` with no arguments to enter the interactive dashboard (REPL).

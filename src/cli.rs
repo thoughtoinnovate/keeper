@@ -36,6 +36,8 @@ pub enum Commands {
     Delete(DeleteArgs),
     Undo(UndoArgs),
     Archive,
+    Export(ExportArgs),
+    Import(ImportArgs),
     #[command(hide = true)]
     Daemon,
 }
@@ -121,4 +123,27 @@ pub struct KeystoreArgs {
 #[derive(Subcommand)]
 pub enum KeystoreCommands {
     Rebuild,
+}
+
+#[derive(Args)]
+pub struct ExportArgs {
+    #[arg(long, value_name = "path", help = "Export plaintext JSON to a file")]
+    pub json: Option<PathBuf>,
+    #[arg(long, value_name = "path", help = "Export encrypted bundle to a file")]
+    pub encrypted: Option<PathBuf>,
+    #[arg(long, help = "Overwrite existing export file")]
+    pub force: bool,
+}
+
+#[derive(Args)]
+pub struct ImportArgs {
+    #[arg(long, value_name = "path", help = "Import plaintext JSON file")]
+    pub json: Option<PathBuf>,
+    #[arg(long, value_name = "path", help = "Import encrypted bundle file")]
+    pub encrypted: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Overwrite existing vault files when importing encrypted bundles"
+    )]
+    pub force: bool,
 }

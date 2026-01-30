@@ -204,6 +204,23 @@ fn handle_connection(
             },
             Err(err) => DaemonResponse::Error(format!("Failed to fetch stats: {err}")),
         },
+        DaemonRequest::ImportItems { items } => {
+            let mut count = 0usize;
+            let mut error = None;
+            for item in items {
+                match db.upsert_item(&item) {
+                    Ok(()) => count += 1,
+                    Err(err) => {
+                        error = Some(format!("Failed to import item {}: {err}", item.id));
+                        break;
+                    }
+                }
+            }
+            match error {
+                Some(err) => DaemonResponse::Error(err),
+                None => DaemonResponse::OkMessage(format!("Imported {count} items")),
+            }
+        }
         DaemonRequest::ArchiveAll => match db.archive_all() {
             Ok(count) => DaemonResponse::OkMessage(format!("Archived {count} item(s)")),
             Err(err) => DaemonResponse::Error(format!("Failed to archive: {err}")),

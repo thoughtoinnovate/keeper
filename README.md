@@ -63,6 +63,21 @@ keeper update --tag v0.1.0
 ```
 Updates verify SHA-256 checksums before installing.
 
+## Export / import
+Plain JSON (merge by id on import):
+```bash
+keeper export --json keeper.json
+keeper import --json keeper.json
+```
+
+Encrypted bundle (password-protected):
+```bash
+keeper export --encrypted backup.keeper
+keeper import --encrypted backup.keeper
+```
+
+Use `--force` to overwrite existing export files or existing vault files on encrypted import.
+
 ## Commands
 - `keeper start|stop|status`
 - `keeper note <text...> [@bucket] [!p1|!p2|!p3] [^date]`

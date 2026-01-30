@@ -24,6 +24,14 @@ pub fn prompt_recovery_code() -> Result<String> {
     prompt_secret("🧩 Enter Recovery Code: ")
 }
 
+pub fn prompt_export_password() -> Result<String> {
+    prompt_secret("🔐 Export Password: ")
+}
+
+pub fn prompt_export_password_confirm() -> Result<String> {
+    prompt_secret("🔐 Confirm Export Password: ")
+}
+
 fn prompt_secret(prompt: &str) -> Result<String> {
     print!("{prompt}");
     io::stdout().flush()?;
