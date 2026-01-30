@@ -1,4 +1,4 @@
-name: Release Linux Binaries
+name: Release Binaries
 on:
   push:
     tags:
@@ -17,7 +17,7 @@ jobs:
           gh release create ${{ github.ref_name }} --generate-notes --title "${{ github.ref_name }}"
 
   build-assets:
-    name: Build Linux release assets
+    name: Build release assets
     needs: create-release
     runs-on: ${{ matrix.config.os }}
     strategy:
