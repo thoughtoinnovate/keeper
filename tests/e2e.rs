@@ -83,8 +83,8 @@ fn test_due_timeline_workspace_filter() {
         .success();
 
     let output = std::str::from_utf8(&assert.get_output().stdout).unwrap();
-    assert!(output.contains("@default/work"));
-    assert!(!output.contains("@other/work"));
+    assert!(output.contains("[📁default>📦 work]"));
+    assert!(!output.contains("[📁other>📦 work]"));
 
     cargo_bin_cmd!("keeper")
         .env("HOME", home)

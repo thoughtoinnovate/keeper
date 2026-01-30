@@ -551,7 +551,23 @@ fn cmd_dash_due_timeline(
         }
     }
 
-    let mermaid_code = timeline::build_mermaid_due_timeline(&upcoming, cutoff)?;
+    let mut overdue_counts = timeline::OverdueCounts {
+        p1: 0,
+        p2: 0,
+        p3: 0,
+        notes: 0,
+    };
+    for item in &overdue {
+        match item.priority {
+            models::Priority::P1_Urgent => overdue_counts.p1 += 1,
+            models::Priority::P2_Important => overdue_counts.p2 += 1,
+            models::Priority::P3_Task => overdue_counts.p3 += 1,
+            models::Priority::None => overdue_counts.notes += 1,
+        }
+    }
+
+    let mermaid_code =
+        timeline::build_mermaid_due_timeline(&upcoming, &overdue_counts, today, cutoff)?;
     if mermaid {
         println!("{mermaid_code}");
         return Ok(());

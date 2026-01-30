@@ -7,7 +7,7 @@ Feature: Due date timeline
     And I add a note "Soon task" in bucket "@default/work" with priority "!p1" and due date "^2026-02-01"
     When I run due timeline
     Then the output should contain "Overdue"
-    And the output should contain "Due Timeline"
+    And the output should contain "Tasks Timeline"
     And I stop the daemon
 
   Scenario: Show mermaid due timeline code
