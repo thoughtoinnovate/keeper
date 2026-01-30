@@ -27,11 +27,13 @@ pub fn build_mermaid_due_timeline(
     );
     lines.push("timeline".to_string());
     lines.push("    title 🗓️ Tasks Timeline".to_string());
-    lines.push("    section ⚠️ Overdue".to_string());
-    lines.push(format!("    P1: {}", overdue.p1));
-    lines.push(format!("    P2: {}", overdue.p2));
-    lines.push(format!("    P3: {}", overdue.p3));
-    lines.push(format!("    notes: {}", overdue.notes));
+    if overdue.p1 + overdue.p2 + overdue.p3 + overdue.notes > 0 {
+        lines.push("    section ⚠️ Overdue".to_string());
+        lines.push(format!("    P1: {}", overdue.p1));
+        lines.push(format!("    P2: {}", overdue.p2));
+        lines.push(format!("    P3: {}", overdue.p3));
+        lines.push(format!("    notes: {}", overdue.notes));
+    }
 
     lines.push(format!("    section 📍 TODAY( {today})"));
     append_section_items(&mut lines, items, Some(today));
@@ -234,8 +236,7 @@ mod tests {
             cutoff,
         )
         .unwrap();
-        assert!(code.contains("section ⚠️ Overdue"));
+        assert!(!code.contains("section ⚠️ Overdue"));
         assert!(code.contains("section 📍 TODAY"));
-        assert!(code.contains("P1: 0"));
     }
 }
