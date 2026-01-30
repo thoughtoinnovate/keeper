@@ -901,6 +901,8 @@ impl Completer for KeeperCompleter {
             "delete" => self.complete_delete(&tokens, ends_with_space, pos),
             "dash" => self.complete_dash(&tokens, ends_with_space, pos),
             "keystore" => self.complete_keystore(&tokens, ends_with_space, pos),
+            "workspace" => self.complete_workspace(&tokens, ends_with_space, pos),
+            "bucket" => self.complete_bucket(&tokens, ends_with_space, pos),
             _ => Vec::new(),
         }
     }
@@ -1120,6 +1122,89 @@ impl KeeperCompleter {
             return suggest_from_candidates(&subcommands, current_text, span_start, pos);
         }
         Vec::new()
+    }
+
+    fn complete_workspace(
+        &self,
+        tokens: &[Token],
+        ends_with_space: bool,
+        pos: usize,
+    ) -> Vec<Suggestion> {
+        let current = if ends_with_space { None } else { tokens.last() };
+        let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
+        let span_start = current.map(|t| t.start).unwrap_or(pos);
+        let subcommands = ["list", "current", "set"];
+        let workspaces = self.workspace_candidates();
+
+        if tokens.len() == 1 {
+            if ends_with_space {
+                return suggest_from_candidates(&subcommands, "", pos, pos);
+            }
+            return Vec::new();
+        }
+        if tokens.len() == 2 {
+            return suggest_from_candidates(&subcommands, current_text, span_start, pos);
+        }
+        if tokens.get(1).map(|t| t.text.as_str()) == Some("set") {
+            return suggest_from_candidates(&workspaces, current_text, span_start, pos);
+        }
+        Vec::new()
+    }
+
+    fn complete_bucket(
+        &self,
+        tokens: &[Token],
+        ends_with_space: bool,
+        pos: usize,
+    ) -> Vec<Suggestion> {
+        let current = if ends_with_space { None } else { tokens.last() };
+        let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
+        let span_start = current.map(|t| t.start).unwrap_or(pos);
+        let subcommands = ["list", "move"];
+        let buckets = {
+            let buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+            buckets.clone()
+        };
+        let workspaces = self.workspace_candidates();
+
+        if tokens.len() == 1 {
+            if ends_with_space {
+                return suggest_from_candidates(&subcommands, "", pos, pos);
+            }
+            return Vec::new();
+        }
+        if tokens.len() == 2 {
+            return suggest_from_candidates(&subcommands, current_text, span_start, pos);
+        }
+        match tokens.get(1).map(|t| t.text.as_str()) {
+            Some("list") => {
+                return suggest_from_candidates(&workspaces, current_text, span_start, pos);
+            }
+            Some("move") => {
+                return suggest_from_candidates(&buckets, current_text, span_start, pos);
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn workspace_candidates(&self) -> Vec<String> {
+        let buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+        let mut list: Vec<String> = buckets
+            .iter()
+            .filter_map(|b| {
+                if b.contains('/') {
+                    return None;
+                }
+                Some(b.trim_end_matches('/').to_string())
+            })
+            .collect();
+        list.sort();
+        list.dedup();
+        if list.is_empty() {
+            list.push(config::default_workspace().to_string());
+        }
+        list
     }
 }
 
