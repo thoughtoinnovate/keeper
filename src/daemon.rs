@@ -121,6 +121,10 @@ fn handle_connection(
             Ok(items) => DaemonResponse::OkItems(items),
             Err(err) => DaemonResponse::Error(format!("Failed to fetch items: {err}")),
         },
+        DaemonRequest::ListBuckets => match db.list_buckets() {
+            Ok(buckets) => DaemonResponse::OkBuckets(buckets),
+            Err(err) => DaemonResponse::Error(format!("Failed to list buckets: {err}")),
+        },
         DaemonRequest::UpdateStatus { id, new_status } => match db.update_status(id, new_status) {
             Ok(true) => DaemonResponse::OkMessage("Updated status".to_string()),
             Ok(false) => DaemonResponse::Error("Item not found".to_string()),

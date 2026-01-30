@@ -1,5 +1,6 @@
 mod cli;
 mod client;
+mod config;
 mod daemon;
 mod db;
 mod export;
@@ -54,6 +55,8 @@ fn run() -> Result<()> {
         Some(Commands::Dash(args)) => cmd_dash(&paths, args),
         Some(Commands::Export(args)) => transfer::run_export(&paths, args),
         Some(Commands::Import(args)) => transfer::run_import(&paths, args),
+        Some(Commands::Workspace(args)) => cmd_workspace(&paths, args),
+        Some(Commands::Bucket(args)) => cmd_bucket(&paths, args),
         Some(Commands::Keystore(args)) => cmd_keystore(&paths, args),
         Some(Commands::Delete(args)) => cmd_delete(&paths, args),
         Some(Commands::Undo(args)) => cmd_undo(&paths, args),
@@ -116,7 +119,14 @@ fn cmd_status(paths: &KeeperPaths) -> Result<()> {
 }
 
 fn cmd_note(paths: &KeeperPaths, args: cli::NoteArgs) -> Result<()> {
-    let (content, bucket, priority, due_date) = sigil::parse_note_args(&args)?;
+    let config = config::Config::load(paths)?;
+    let (content, bucket, priority, due_date) =
+        sigil::parse_note_args(&args, &config.default_workspace)?;
+    if !bucket.contains('/') {
+        return Err(anyhow!(
+            "Bucket must include workspace (e.g. @default/inbox)"
+        ));
+    }
     if content.is_empty() {
         return Err(anyhow!("Note content cannot be empty"));
     }
@@ -137,7 +147,10 @@ fn cmd_note(paths: &KeeperPaths, args: cli::NoteArgs) -> Result<()> {
 }
 
 fn cmd_get(paths: &KeeperPaths, args: cli::GetArgs) -> Result<()> {
-    let bucket_filter = args.bucket_flag.or(args.bucket);
+    let bucket_filter = match args.bucket_flag.or(args.bucket) {
+        Some(bucket) => Some(sigil::normalize_bucket_filter(&bucket)?),
+        None => None,
+    };
     let request = DaemonRequest::GetItems {
         bucket_filter,
         priority_filter: None,
@@ -196,7 +209,8 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
     let id = args
         .id
         .ok_or_else(|| anyhow!("Provide an id or use --self to update keeper"))?;
-    let spec = sigil::parse_update_args(&args)?;
+    let config = config::Config::load(paths)?;
+    let spec = sigil::parse_update_args(&args, &config.default_workspace)?;
     if spec.content.is_none()
         && spec.bucket.is_none()
         && spec.priority.is_none()
@@ -287,6 +301,81 @@ fn cmd_archive(paths: &KeeperPaths) -> Result<()> {
         _ => println!("No archived items"),
     }
     Ok(())
+}
+
+fn cmd_workspace(paths: &KeeperPaths, args: cli::WorkspaceArgs) -> Result<()> {
+    match args.command {
+        cli::WorkspaceCommands::List => {
+            let db = load_db(paths)?;
+            let mut workspaces = db.list_workspaces()?;
+            if workspaces.is_empty() {
+                workspaces.push(config::default_workspace().to_string());
+            }
+            for ws in workspaces {
+                println!("{ws}");
+            }
+            Ok(())
+        }
+        cli::WorkspaceCommands::Current => {
+            let config = config::Config::load(paths)?;
+            println!("{}", config.default_workspace);
+            Ok(())
+        }
+        cli::WorkspaceCommands::Set { name } => {
+            if !name.starts_with('@') {
+                return Err(anyhow!("Workspace must start with @"));
+            }
+            let mut config = config::Config::load(paths)?;
+            config.default_workspace = name;
+            config.save(paths)?;
+            println!("Default workspace set to {}", config.default_workspace);
+            Ok(())
+        }
+    }
+}
+
+fn cmd_bucket(paths: &KeeperPaths, args: cli::BucketArgs) -> Result<()> {
+    match args.command {
+        cli::BucketCommands::List { workspace } => {
+            let db = load_db(paths)?;
+            let buckets = db.list_buckets()?;
+            let filtered: Vec<_> = if let Some(ws) = workspace {
+                buckets
+                    .into_iter()
+                    .filter(|b| b == &ws || b.starts_with(&format!("{ws}/")))
+                    .collect()
+            } else {
+                buckets
+            };
+            for bucket in filtered {
+                println!("{bucket}");
+            }
+            Ok(())
+        }
+        cli::BucketCommands::Move { from, to } => {
+            let mut db = load_db(paths)?;
+            let count = db.move_bucket_prefix(&from, &to)?;
+            println!("Moved {count} item(s)");
+            Ok(())
+        }
+    }
+}
+
+fn load_db(paths: &KeeperPaths) -> Result<db::Db> {
+    if client::daemon_running(paths) {
+        return Err(anyhow!("Stop the daemon to manage workspaces or buckets."));
+    }
+    if !paths.db_path.exists() {
+        return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
+    }
+    let mut password = prompt::prompt_password()?;
+    let keystore = keystore::Keystore::load(paths.keystore_path())?;
+    let mut master_key = keystore.unwrap_with_password(&password)?;
+    password.zeroize();
+    let db_key = security::derive_db_key_hex(&master_key);
+    let db = db::Db::open(&paths.db_path, &db_key)?;
+    master_key.zeroize();
+    Ok(db)
 }
 
 fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
@@ -384,7 +473,9 @@ fn cmd_daemon(paths: &KeeperPaths) -> Result<()> {
 
 fn cmd_dash(paths: &KeeperPaths, args: cli::DashArgs) -> Result<()> {
     match args.command {
-        cli::DashCommands::DueTimeline { mermaid } => cmd_dash_due_timeline(paths, mermaid),
+        cli::DashCommands::DueTimeline { mermaid, workspace } => {
+            cmd_dash_due_timeline(paths, mermaid, workspace)
+        }
     }
 }
 
@@ -419,13 +510,21 @@ fn cmd_keystore_rebuild(paths: &KeeperPaths) -> Result<()> {
     }
 }
 
-fn cmd_dash_due_timeline(paths: &KeeperPaths, mermaid: bool) -> Result<()> {
+fn cmd_dash_due_timeline(
+    paths: &KeeperPaths,
+    mermaid: bool,
+    workspace: Option<String>,
+) -> Result<()> {
     let today = chrono::Local::now().date_naive();
     let cutoff = today + chrono::Duration::days(15);
+    let bucket_filter = match workspace {
+        Some(ws) => Some(sigil::normalize_bucket_filter(&ws)?),
+        None => None,
+    };
     let response = client::send_request(
         paths,
         &DaemonRequest::GetItems {
-            bucket_filter: None,
+            bucket_filter,
             priority_filter: None,
             status_filter: Some(models::Status::Open),
             date_cutoff: Some(cutoff),

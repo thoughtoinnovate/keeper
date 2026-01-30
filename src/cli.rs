@@ -42,19 +42,21 @@ pub enum Commands {
     Archive,
     Export(ExportArgs),
     Import(ImportArgs),
+    Workspace(WorkspaceArgs),
+    Bucket(BucketArgs),
     #[command(hide = true)]
     Daemon,
 }
 
 #[derive(Args)]
 pub struct NoteArgs {
-    /// Raw text content, may contain sigils (@bucket !p1 ^date)
+    /// Raw text content, may contain sigils (@workspace/bucket !p1 ^date)
     pub content: Vec<String>,
 }
 
 #[derive(Args)]
 pub struct GetArgs {
-    /// Bucket filter (positional), e.g. @work
+    /// Bucket/workspace filter (positional), e.g. @default or @default/work
     #[arg(value_name = "bucket")]
     pub bucket: Option<String>,
     #[arg(short, long)]
@@ -115,6 +117,8 @@ pub enum DashCommands {
     DueTimeline {
         #[arg(long)]
         mermaid: bool,
+        #[arg(long, value_name = "workspace")]
+        workspace: Option<String>,
     },
 }
 
@@ -127,6 +131,31 @@ pub struct KeystoreArgs {
 #[derive(Subcommand)]
 pub enum KeystoreCommands {
     Rebuild,
+}
+
+#[derive(Args)]
+pub struct WorkspaceArgs {
+    #[command(subcommand)]
+    pub command: WorkspaceCommands,
+}
+
+#[derive(Subcommand)]
+pub enum WorkspaceCommands {
+    List,
+    Current,
+    Set { name: String },
+}
+
+#[derive(Args)]
+pub struct BucketArgs {
+    #[command(subcommand)]
+    pub command: BucketCommands,
+}
+
+#[derive(Subcommand)]
+pub enum BucketCommands {
+    List { workspace: Option<String> },
+    Move { from: String, to: String },
 }
 
 #[derive(Args)]

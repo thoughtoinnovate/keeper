@@ -22,14 +22,24 @@ The installer downloads the latest release and verifies a SHA-256 checksum befor
 keeper start
 
 # Capture a task
-keeper note "Fix auth bug" @work !p1 ^2026-02-01
+keeper note "Fix auth bug" @default/work !p1 ^2026-02-01
 
 # Fetch items
-keeper get @work
+keeper get @default
 
 # Stop the daemon
 keeper stop
 ```
+
+## Workspaces and buckets
+Buckets are hierarchical. The top-level segment is the workspace:
+```
+@default/inbox
+@feedback/bugs
+@ideas/buckets
+```
+
+If you omit a bucket, Keeper uses the default workspace inbox (e.g. `@default/inbox`). If you specify a bucket, it must include a workspace.
 
 ## Vaults and paths
 By default, Keeper uses:
@@ -39,7 +49,7 @@ By default, Keeper uses:
 Use `--vault` to target a different location:
 ```bash
 keeper --vault /path/to/vault start
-keeper --vault /path/to/vault note "..." @work !p2
+keeper --vault /path/to/vault note "..." @default/work !p2
 ```
 
 Notes:
@@ -80,14 +90,17 @@ Use `--force` to overwrite existing export files or existing vault files on encr
 
 ## Commands
 - `keeper start|stop|status`
-- `keeper note <text...> [@bucket] [!p1|!p2|!p3] [^date]`
-- `keeper get [@bucket] [--all] [--notes]`
+- `keeper note <text...> [@workspace/bucket] [!p1|!p2|!p3] [^date]`
+- `keeper get [@workspace|@workspace/bucket] [--all] [--notes]`
 - `keeper mark <id> <open|done|deleted>`
-- `keeper update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]`
+- `keeper update <id> <text...> [@workspace/bucket] [!p1|p2|p3|none] [^date|^clear]`
+- `keeper workspace list|current|set @workspace`
+- `keeper bucket list [@workspace]`
+- `keeper bucket move <from> <to>`
 - `keeper delete <id>` / `keeper delete --all`
 - `keeper undo [id]`
 - `keeper archive`
-- `keeper dash due_timeline [--mermaid]`
+- `keeper dash due_timeline [--mermaid] [--workspace @default]` (Mermaid output colors by priority)
 
 ## MCP server (AI tools)
 The MCP server is a separate binary under `mcp/keeper-mcp`. See `MCP_AGENT_GUIDE.md` for setup and tool docs.

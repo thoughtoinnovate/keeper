@@ -3,7 +3,7 @@ use crate::ipc::DaemonRequest;
 use crate::models::{Item, Priority, Status};
 use crate::paths::KeeperPaths;
 use crate::transfer;
-use crate::{logger, prompt, session, timeline};
+use crate::{config, logger, prompt, session, timeline};
 use anyhow::Result;
 use chrono::{Duration, Local};
 use clap::{CommandFactory, Parser};
@@ -185,17 +185,23 @@ fn handle_repl_command(
         "note" => {
             let content = tokens[1..].to_vec();
             if content.is_empty() {
-                println!("Usage: note <text...> [@bucket] [!p1|p1] [^date]");
+                println!("Usage: note <text...> [@workspace/bucket] [!p1|p1] [^date]");
                 return Ok(());
             }
             let args = crate::cli::NoteArgs { content };
-            let (content, bucket, priority, due_date) = match crate::sigil::parse_note_args(&args) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    eprintln!("{err}");
-                    return Ok(());
-                }
-            };
+            let config = config::Config::load(paths)?;
+            let (content, bucket, priority, due_date) =
+                match crate::sigil::parse_note_args(&args, &config.default_workspace) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(());
+                    }
+                };
+            if !bucket.contains('/') {
+                eprintln!("Bucket must include workspace (e.g. @default/inbox)");
+                return Ok(());
+            }
             if content.is_empty() {
                 eprintln!("Note content cannot be empty");
                 return Ok(());
@@ -251,6 +257,36 @@ fn handle_repl_command(
             }
             Ok(())
         }
+        "workspace" => {
+            let mut args = vec!["keeper".to_string(), "workspace".to_string()];
+            args.extend(tokens[1..].to_vec());
+            match crate::cli::Cli::try_parse_from(args) {
+                Ok(cli) => {
+                    if let Some(crate::cli::Commands::Workspace(ws_args)) = cli.command
+                        && let Err(err) = handle_workspace_command(paths, ws_args)
+                    {
+                        eprintln!("{err}");
+                    }
+                }
+                Err(err) => eprintln!("{err}"),
+            }
+            Ok(())
+        }
+        "bucket" => {
+            let mut args = vec!["keeper".to_string(), "bucket".to_string()];
+            args.extend(tokens[1..].to_vec());
+            match crate::cli::Cli::try_parse_from(args) {
+                Ok(cli) => {
+                    if let Some(crate::cli::Commands::Bucket(bucket_args)) = cli.command
+                        && let Err(err) = handle_bucket_command(paths, bucket_args)
+                    {
+                        eprintln!("{err}");
+                    }
+                }
+                Err(err) => eprintln!("{err}"),
+            }
+            Ok(())
+        }
         "get" => {
             let mut bucket_filter: Option<String> = None;
             if tokens.len() > 1 {
@@ -267,6 +303,15 @@ fn handle_repl_command(
                     }
                     bucket_filter = Some(token.clone());
                     break;
+                }
+            }
+            if let Some(raw) = bucket_filter.take() {
+                match crate::sigil::normalize_bucket_filter(&raw) {
+                    Ok(normalized) => bucket_filter = Some(normalized),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(());
+                    }
                 }
             }
             let request = DaemonRequest::GetItems {
@@ -310,7 +355,9 @@ fn handle_repl_command(
         }
         "update" => {
             if tokens.len() < 2 {
-                println!("Usage: update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]");
+                println!(
+                    "Usage: update <id> <text...> [@workspace/bucket] [!p1|p2|p3|none] [^date|^clear]"
+                );
                 return Ok(());
             }
             let id: i64 = tokens[1].parse().unwrap_or(0);
@@ -319,13 +366,16 @@ fn handle_repl_command(
                 return Ok(());
             }
             let content_tokens: Vec<String> = tokens.iter().skip(2).cloned().collect();
-            let spec = match crate::sigil::parse_update_tokens(&content_tokens) {
-                Ok(spec) => spec,
-                Err(err) => {
-                    eprintln!("{err}");
-                    return Ok(());
-                }
-            };
+            let config = config::Config::load(paths)?;
+            let spec =
+                match crate::sigil::parse_update_tokens(&content_tokens, &config.default_workspace)
+                {
+                    Ok(spec) => spec,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(());
+                    }
+                };
             if spec.content.is_none()
                 && spec.bucket.is_none()
                 && spec.priority.is_none()
@@ -352,13 +402,31 @@ fn handle_repl_command(
         }
         "dash" => {
             if tokens.len() < 2 {
-                println!("Usage: dash due_timeline [--mermaid]");
+                println!("Usage: dash due_timeline [--mermaid] [--workspace @default]");
                 return Ok(());
             }
             match tokens[1].as_str() {
                 "due_timeline" => {
-                    let mermaid = tokens.iter().any(|t| t == "--mermaid");
-                    render_due_timeline(paths, mermaid)?;
+                    let mut mermaid = false;
+                    let mut workspace: Option<String> = None;
+                    let mut iter = tokens.iter().skip(2).peekable();
+                    while let Some(token) = iter.next() {
+                        if token == "--mermaid" {
+                            mermaid = true;
+                            continue;
+                        }
+                        if token == "--workspace" {
+                            if let Some(value) = iter.peek() {
+                                workspace = Some((*value).clone());
+                            }
+                            continue;
+                        }
+                        if token.starts_with("--") {
+                            continue;
+                        }
+                        workspace = Some(token.clone());
+                    }
+                    render_due_timeline(paths, mermaid, workspace)?;
                     Ok(())
                 }
                 _ => {
@@ -542,13 +610,24 @@ fn load_buckets(paths: &KeeperPaths) -> Vec<String> {
     );
 
     let mut buckets: BTreeSet<String> = BTreeSet::new();
+    let mut workspaces: BTreeSet<String> = BTreeSet::new();
     if let Ok(crate::ipc::DaemonResponse::OkItems(items)) = response {
         for item in items {
-            buckets.insert(item.bucket);
+            let bucket = item.bucket;
+            if let Some((workspace, _)) = bucket.split_once('/') {
+                workspaces.insert(workspace.to_string());
+            }
+            buckets.insert(bucket);
         }
     }
+    for ws in workspaces {
+        buckets.insert(ws.clone());
+        buckets.insert(format!("{ws}/"));
+    }
     if buckets.is_empty() {
-        buckets.insert("@inbox".to_string());
+        buckets.insert("@default/inbox".to_string());
+        buckets.insert("@default".to_string());
+        buckets.insert("@default/".to_string());
     }
     buckets.into_iter().collect()
 }
@@ -683,7 +762,7 @@ fn template_for_command(cmd: &str, tokens: &[String], line: &str) -> String {
                 hint.push_str("\"mynote\"");
             }
             if !has_bucket {
-                hint.push_str(" @bucket");
+                hint.push_str(" @workspace/bucket");
             }
             if !has_priority {
                 hint.push_str(" p1");
@@ -694,7 +773,7 @@ fn template_for_command(cmd: &str, tokens: &[String], line: &str) -> String {
         }
         "get" => {
             if tokens.len() == 1 {
-                hint.push_str(" @bucket|--notes|--all");
+                hint.push_str(" @workspace|@workspace/bucket|--notes|--all");
             }
         }
         "mark" => {
@@ -956,6 +1035,21 @@ impl KeeperCompleter {
         let current_text = current.map(|t| t.text.as_str()).unwrap_or("");
         let span_start = current.map(|t| t.start).unwrap_or(pos);
         let subcommands = ["due_timeline"];
+        let workspaces = {
+            let buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+            let mut list: Vec<String> = buckets
+                .iter()
+                .filter_map(|b| {
+                    if b.contains('/') {
+                        return None;
+                    }
+                    Some(b.trim_end_matches('/').to_string())
+                })
+                .collect();
+            list.sort();
+            list.dedup();
+            list
+        };
 
         if tokens.len() == 1 {
             if ends_with_space {
@@ -966,13 +1060,40 @@ impl KeeperCompleter {
 
         if tokens.len() == 2 {
             if current_text.starts_with('-') {
-                return suggest_from_candidates(&["--mermaid"], current_text, span_start, pos);
+                return suggest_from_candidates(
+                    &["--mermaid", "--workspace"],
+                    current_text,
+                    span_start,
+                    pos,
+                );
             }
             return suggest_from_candidates(&subcommands, current_text, span_start, pos);
         }
 
         if tokens.get(1).map(|t| t.text.as_str()) == Some("due_timeline") {
-            return suggest_from_candidates(&["--mermaid"], current_text, span_start, pos);
+            if current_text.starts_with('-') {
+                return suggest_from_candidates(
+                    &["--mermaid", "--workspace"],
+                    current_text,
+                    span_start,
+                    pos,
+                );
+            }
+            let prev = tokens
+                .get(tokens.len().saturating_sub(2))
+                .map(|t| t.text.as_str());
+            if prev == Some("--workspace")
+                || current_text.starts_with('@')
+                || current_text.is_empty()
+            {
+                return suggest_from_candidates(&workspaces, current_text, span_start, pos);
+            }
+            return suggest_from_candidates(
+                &["--mermaid", "--workspace"],
+                current_text,
+                span_start,
+                pos,
+            );
         }
 
         Vec::new()
@@ -1206,6 +1327,15 @@ fn render_dashboard(paths: &KeeperPaths) -> Result<()> {
         " Overdue by Priority: P1 {} | P2 {} | P3 {} | None {}",
         overdue.0, overdue.1, overdue.2, overdue.3
     );
+    let bucket_counts = fetch_bucket_counts(paths)?;
+    if !bucket_counts.is_empty() {
+        let summary: Vec<String> = bucket_counts
+            .iter()
+            .take(5)
+            .map(|(bucket, count)| format!("{bucket} {count}"))
+            .collect();
+        println!(" Buckets: {}", summary.join(" | "));
+    }
     println!();
 
     Ok(())
@@ -1327,13 +1457,125 @@ fn fetch_overdue_counts(paths: &KeeperPaths) -> Result<(usize, usize, usize, usi
     Ok((p1, p2, p3, none))
 }
 
-fn render_due_timeline(paths: &KeeperPaths, mermaid: bool) -> Result<()> {
-    let today = Local::now().date_naive();
-    let cutoff = today + Duration::days(15);
-    let response = send_request(
+fn fetch_bucket_counts(paths: &KeeperPaths) -> Result<Vec<(String, usize)>> {
+    let resp = send_request(
         paths,
         &DaemonRequest::GetItems {
             bucket_filter: None,
+            priority_filter: None,
+            status_filter: Some(Status::Open),
+            date_cutoff: None,
+            include_notes: true,
+            notes_only: false,
+        },
+    )?;
+
+    let items = match resp {
+        crate::ipc::DaemonResponse::OkItems(items) => items,
+        _ => Vec::new(),
+    };
+
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for item in items {
+        *counts.entry(item.bucket).or_insert(0) += 1;
+    }
+    let mut entries: Vec<(String, usize)> = counts.into_iter().collect();
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(entries)
+}
+
+fn handle_workspace_command(paths: &KeeperPaths, args: crate::cli::WorkspaceArgs) -> Result<()> {
+    match args.command {
+        crate::cli::WorkspaceCommands::List => {
+            let db = load_db_for_manage(paths)?;
+            let mut workspaces = db.list_workspaces()?;
+            if workspaces.is_empty() {
+                workspaces.push(config::default_workspace().to_string());
+            }
+            for ws in workspaces {
+                println!("{ws}");
+            }
+        }
+        crate::cli::WorkspaceCommands::Current => {
+            let config = config::Config::load(paths)?;
+            println!("{}", config.default_workspace);
+        }
+        crate::cli::WorkspaceCommands::Set { name } => {
+            if !name.starts_with('@') {
+                return Err(anyhow::anyhow!("Workspace must start with @"));
+            }
+            let mut cfg = config::Config::load(paths)?;
+            cfg.default_workspace = name;
+            cfg.save(paths)?;
+            println!("Default workspace set to {}", cfg.default_workspace);
+        }
+    }
+    Ok(())
+}
+
+fn handle_bucket_command(paths: &KeeperPaths, args: crate::cli::BucketArgs) -> Result<()> {
+    match args.command {
+        crate::cli::BucketCommands::List { workspace } => {
+            let db = load_db_for_manage(paths)?;
+            let buckets = db.list_buckets()?;
+            let filtered: Vec<_> = if let Some(ws) = workspace {
+                buckets
+                    .into_iter()
+                    .filter(|b| b == &ws || b.starts_with(&format!("{ws}/")))
+                    .collect()
+            } else {
+                buckets
+            };
+            for bucket in filtered {
+                println!("{bucket}");
+            }
+        }
+        crate::cli::BucketCommands::Move { from, to } => {
+            let mut db = load_db_for_manage(paths)?;
+            let count = db.move_bucket_prefix(&from, &to)?;
+            println!("Moved {count} item(s)");
+        }
+    }
+    Ok(())
+}
+
+fn load_db_for_manage(paths: &KeeperPaths) -> Result<crate::db::Db> {
+    if client::daemon_running(paths) {
+        return Err(anyhow::anyhow!(
+            "Stop the daemon to manage workspaces or buckets."
+        ));
+    }
+    if !paths.db_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Vault not found at {}",
+            paths.db_path.display()
+        ));
+    }
+    let mut password = prompt::prompt_password()?;
+    let keystore = crate::keystore::Keystore::load(paths.keystore_path())?;
+    let mut master_key = keystore.unwrap_with_password(&password)?;
+    password.zeroize();
+    let db_key = crate::security::derive_db_key_hex(&master_key);
+    let db = crate::db::Db::open(&paths.db_path, &db_key)?;
+    master_key.zeroize();
+    Ok(db)
+}
+
+fn render_due_timeline(
+    paths: &KeeperPaths,
+    mermaid: bool,
+    workspace: Option<String>,
+) -> Result<()> {
+    let today = Local::now().date_naive();
+    let cutoff = today + Duration::days(15);
+    let bucket_filter = match workspace {
+        Some(ws) => Some(crate::sigil::normalize_bucket_filter(&ws)?),
+        None => None,
+    };
+    let response = send_request(
+        paths,
+        &DaemonRequest::GetItems {
+            bucket_filter,
             priority_filter: None,
             status_filter: Some(Status::Open),
             date_cutoff: Some(cutoff),

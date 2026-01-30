@@ -7,6 +7,7 @@ pub struct KeeperPaths {
     pub db_path: PathBuf,
     pub socket_path: PathBuf,
     pub keystore_path: PathBuf,
+    pub config_path: PathBuf,
     pub vault_arg: Option<PathBuf>,
 }
 
@@ -42,6 +43,7 @@ impl KeeperPaths {
             db_path,
             socket_path: base_dir.join("keeper.sock"),
             keystore_path: base_dir.join("keystore.json"),
+            config_path: base_dir.join("config.json"),
             base_dir,
             vault_arg,
         })

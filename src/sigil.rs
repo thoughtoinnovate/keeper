@@ -3,14 +3,17 @@ use crate::models::Priority;
 use anyhow::{Result, anyhow};
 use chrono::{Duration, Local, NaiveDate};
 
-pub fn parse_note_args(args: &NoteArgs) -> Result<(String, String, Priority, Option<NaiveDate>)> {
-    let mut bucket = "@inbox".to_string();
+pub fn parse_note_args(
+    args: &NoteArgs,
+    default_workspace: &str,
+) -> Result<(String, String, Priority, Option<NaiveDate>)> {
+    let mut bucket = format!("{default_workspace}/inbox");
     let mut priority = Priority::None;
     let mut due_date: Option<NaiveDate> = None;
     let mut content_parts: Vec<String> = Vec::new();
 
     for token in &args.content {
-        if let Some(new_bucket) = parse_bucket(token) {
+        if let Some(new_bucket) = parse_bucket(token, default_workspace)? {
             bucket = new_bucket;
             continue;
         }
@@ -41,18 +44,18 @@ pub struct UpdateSpec {
     pub due_date: Option<Option<NaiveDate>>,
 }
 
-pub fn parse_update_args(args: &UpdateArgs) -> Result<UpdateSpec> {
-    parse_update_tokens(&args.content)
+pub fn parse_update_args(args: &UpdateArgs, default_workspace: &str) -> Result<UpdateSpec> {
+    parse_update_tokens(&args.content, default_workspace)
 }
 
-pub fn parse_update_tokens(tokens: &[String]) -> Result<UpdateSpec> {
+pub fn parse_update_tokens(tokens: &[String], default_workspace: &str) -> Result<UpdateSpec> {
     let mut bucket: Option<String> = None;
     let mut priority: Option<Priority> = None;
     let mut due_date: Option<Option<NaiveDate>> = None;
     let mut content_parts: Vec<String> = Vec::new();
 
     for token in tokens {
-        if let Some(new_bucket) = parse_bucket(token) {
+        if let Some(new_bucket) = parse_bucket(token, default_workspace)? {
             bucket = Some(new_bucket);
             continue;
         }
@@ -86,11 +89,37 @@ pub fn parse_update_tokens(tokens: &[String]) -> Result<UpdateSpec> {
     })
 }
 
-fn parse_bucket(token: &str) -> Option<String> {
-    if token.starts_with('@') && token.len() > 1 {
-        return Some(token.to_string());
+pub fn normalize_bucket_filter(input: &str) -> Result<String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if !trimmed.starts_with('@') {
+        return Err(anyhow!("Bucket/workspace must start with @"));
     }
-    None
+    if trimmed == "@" {
+        return Err(anyhow!("Workspace is required"));
+    }
+    if let Some((workspace, bucket)) = trimmed.split_once('/') {
+        if workspace.len() <= 1 || bucket.is_empty() {
+            return Err(anyhow!(
+                "Bucket must include workspace and bucket (e.g. @default/inbox)"
+            ));
+        }
+    }
+    Ok(trimmed.to_string())
+}
+
+fn parse_bucket(token: &str, default_workspace: &str) -> Result<Option<String>> {
+    if !token.starts_with('@') {
+        return Ok(None);
+    }
+    if token == "@" {
+        return Ok(None);
+    }
+    if token.contains('/') {
+        return Ok(Some(token.to_string()));
+    }
+    Err(anyhow!(
+        "Bucket must include workspace (e.g. {default_workspace}/inbox)"
+    ))
 }
 
 fn parse_priority(token: &str) -> Option<Priority> {
@@ -156,9 +185,9 @@ mod tests {
         let args = NoteArgs {
             content: vec!["just".into(), "a".into(), "note".into()],
         };
-        let (content, bucket, priority, due_date) = parse_note_args(&args).unwrap();
+        let (content, bucket, priority, due_date) = parse_note_args(&args, "@default").unwrap();
         assert_eq!(content, "just a note");
-        assert_eq!(bucket, "@inbox");
+        assert_eq!(bucket, "@default/inbox");
         assert_eq!(priority, Priority::None);
         assert_eq!(due_date, None);
     }
@@ -170,14 +199,14 @@ mod tests {
                 "Fix".into(),
                 "auth".into(),
                 "bug".into(),
-                "@work".into(),
+                "@work/bugs".into(),
                 "!p1".into(),
                 "^2025-12-31".into(),
             ],
         };
-        let (content, bucket, priority, due_date) = parse_note_args(&args).unwrap();
+        let (content, bucket, priority, due_date) = parse_note_args(&args, "@default").unwrap();
         assert_eq!(content, "Fix auth bug");
-        assert_eq!(bucket, "@work");
+        assert_eq!(bucket, "@work/bugs");
         assert_eq!(priority, Priority::P1_Urgent);
         assert_eq!(
             due_date,
@@ -191,13 +220,13 @@ mod tests {
         let args_today = NoteArgs {
             content: vec!["Task".into(), "^today".into()],
         };
-        let (_, _, _, due_today) = parse_note_args(&args_today).unwrap();
+        let (_, _, _, due_today) = parse_note_args(&args_today, "@default").unwrap();
         assert_eq!(due_today, Some(today));
 
         let args_tomorrow = NoteArgs {
             content: vec!["Task".into(), "^tomorrow".into()],
         };
-        let (_, _, _, due_tomorrow) = parse_note_args(&args_tomorrow).unwrap();
+        let (_, _, _, due_tomorrow) = parse_note_args(&args_tomorrow, "@default").unwrap();
         assert_eq!(due_tomorrow, Some(today + Duration::days(1)));
     }
 
@@ -206,7 +235,7 @@ mod tests {
         let args = NoteArgs {
             content: vec!["Review".into(), "^notadate".into()],
         };
-        let err = parse_note_args(&args).unwrap_err();
+        let err = parse_note_args(&args, "@default").unwrap_err();
         assert!(err.to_string().contains("Invalid due date"));
     }
 
@@ -215,16 +244,25 @@ mod tests {
         let args = NoteArgs {
             content: vec![
                 "Plan".into(),
-                "@home".into(),
-                "@work".into(),
+                "@home/projects".into(),
+                "@work/plan".into(),
                 "!p2".into(),
                 "!p3".into(),
             ],
         };
-        let (content, bucket, priority, _) = parse_note_args(&args).unwrap();
+        let (content, bucket, priority, _) = parse_note_args(&args, "@default").unwrap();
         assert_eq!(content, "Plan");
-        assert_eq!(bucket, "@work");
+        assert_eq!(bucket, "@work/plan");
         assert_eq!(priority, Priority::P3_Task);
+    }
+
+    #[test]
+    fn bucket_requires_workspace() {
+        let args = NoteArgs {
+            content: vec!["Fix".into(), "@work".into()],
+        };
+        let err = parse_note_args(&args, "@default").unwrap_err();
+        assert!(err.to_string().contains("Bucket must include workspace"));
     }
 
     #[test]
@@ -232,7 +270,7 @@ mod tests {
         let args = NoteArgs {
             content: vec!["Task".into(), "p1".into()],
         };
-        let (_, _, priority, _) = parse_note_args(&args).unwrap();
+        let (_, _, priority, _) = parse_note_args(&args, "@default").unwrap();
         assert_eq!(priority, Priority::P1_Urgent);
     }
 }

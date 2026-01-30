@@ -9,14 +9,25 @@ Keeper is a fast, encrypted CLI “second brain” that runs a local daemon. The
 keeper start
 
 # Capture a task
-keeper note "Fix auth bug" @work !p1 ^2026-02-01
+keeper note "Fix auth bug" @default/work !p1 ^2026-02-01
 
 # Fetch items
-keeper get @work
+keeper get @default
 
 # Stop the daemon (wipes key from RAM)
 keeper stop
 ```
+
+## Workspaces and Buckets
+Buckets are hierarchical. The top-level segment is the workspace:
+```
+@default/inbox
+@feedback/bugs
+@ideas/buckets
+```
+
+If you omit a bucket, Keeper uses the default workspace inbox (e.g. `@default/inbox`). If you specify a bucket, it must include a workspace.
+Existing buckets without a workspace are migrated to `@default/<bucket>` on first start after upgrade.
 
 ## Vaults and Paths
 By default, Keeper uses `~/.keeper/vault.db` and `~/.keeper/keystore.json`.
@@ -24,7 +35,7 @@ By default, Keeper uses `~/.keeper/vault.db` and `~/.keeper/keystore.json`.
 Use `--vault` to target a different location:
 ```bash
 keeper --vault /path/to/vault start
-keeper --vault /path/to/vault note "..." @work !p2
+keeper --vault /path/to/vault note "..." @default/work !p2
 ```
 
 Notes:
@@ -78,19 +89,19 @@ You must enter the **current password** and then set a new one.
 - `keeper start` — unlocks/starts the daemon (auto‑init on first run)
 - `keeper stop` — stops the daemon and wipes key from RAM
 - `keeper status` — shows daemon status
-- `keeper dash due_timeline [--mermaid]` — shows due‑date timeline for the next 15 days (ASCII by default, Mermaid code with `--mermaid`)
+- `keeper dash due_timeline [--mermaid] [--workspace @default]` — shows due‑date timeline for the next 15 days (ASCII by default, Mermaid code with `--mermaid`). Mermaid output colors entries by priority.
   - When showing ASCII, Keeper also prints a Mermaid Live link you can click/copy.
 
 ### Capture and Retrieval
-- `keeper note <text...> [@bucket] [!p1|!p2|!p3] [^date]`
-- `keeper get [@bucket] [--all] [--notes]`
+- `keeper note <text...> [@workspace/bucket] [!p1|!p2|!p3] [^date]`
+- `keeper get [@workspace|@workspace/bucket] [--all] [--notes]`
   - default shows open tasks
   - `--all` includes notes
   - `--notes` shows only notes
 - `keeper mark <id> <open|done|deleted>`
 - `keeper update` — update the keeper binary to the latest release
 - `keeper update --tag v0.2.0` — update to a specific release tag
-- `keeper update <id> <text...> [@bucket] [!p1|p2|p3|none] [^date|^clear]`
+- `keeper update <id> <text...> [@workspace/bucket] [!p1|p2|p3|none] [^date|^clear]`
 
 ### Archive and Undo
 - `keeper delete <id>` — soft‑delete a single item
@@ -161,19 +172,19 @@ Notes:
 
 ## Sigil Syntax (Quick Capture)
 Use sigils anywhere in note text:
-- `@bucket` → context/category (default: `@inbox`)
+- `@workspace/bucket` → context/category (default: `@default/inbox` when omitted)
 - `!p1 !p2 !p3` → priority (task vs note)
 - `^date` → due date (`YYYY-MM-DD`, `^today`, `^tomorrow`)
 
 Example:
 ```bash
-keeper note "Prep deck @work !p1 ^2026-02-10"
+keeper note "Prep deck @default/work !p1 ^2026-02-10"
 ```
 
 Update a task by id:
 ```bash
 keeper update 42 "!p2 ^2026-02-15"
-keeper update 42 "New content @work"
+keeper update 42 "New content @default/work"
 keeper update 42 "^clear"
 ```
 
@@ -223,3 +234,9 @@ Not yet covered:
 - REPL behaviors
 - Permission hardening verification on all platforms
 - Archive/undo edge cases
+### Workspaces and Buckets
+- `keeper workspace list`
+- `keeper workspace current`
+- `keeper workspace set @default`
+- `keeper bucket list [@workspace]`
+- `keeper bucket move <from> <to>`

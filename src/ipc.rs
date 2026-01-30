@@ -42,6 +42,7 @@ pub enum DaemonRequest {
     ImportItems {
         items: Vec<Item>,
     },
+    ListBuckets,
     Undo {
         id: Option<i64>,
     },
@@ -55,5 +56,6 @@ pub enum DaemonResponse {
     // Create a specific struct for dash stats if needed
     OkStats { open: i64, done_today: i64, p1: i64 },
     OkRecoveryCode(String),
+    OkBuckets(Vec<String>),
     Error(String),
 }

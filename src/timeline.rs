@@ -10,8 +10,18 @@ use std::io::Write;
 pub fn build_mermaid_due_timeline(items: &[Item], cutoff: NaiveDate) -> Result<String> {
     let today = Local::now().date_naive();
     let mut lines = Vec::new();
+    lines.push(
+        "%%{init: {'theme':'base','themeVariables':{'timelineTextColor':'#1f2937','timelineBorderColor':'#e5e7eb','timelineSectionColor':'#ffffff','fontFamily':'Inter, ui-sans-serif'}}}%%"
+            .to_string(),
+    );
     lines.push("timeline".to_string());
     lines.push(format!("    title Due Timeline ({today} to {cutoff})"));
+    lines.push("classDef p1 fill:#fecaca,stroke:#ef4444,color:#111827;".to_string());
+    lines.push("classDef p2 fill:#fef3c7,stroke:#f59e0b,color:#111827;".to_string());
+    lines.push("classDef p3 fill:#dcfce7,stroke:#22c55e,color:#111827;".to_string());
+    lines.push("classDef none fill:#e5e7eb,stroke:#9ca3af,color:#111827;".to_string());
+    lines.push("classDef today fill:#dbeafe,stroke:#3b82f6,color:#111827;".to_string());
+    lines.push(format!("    {today} : Today :::today"));
 
     let mut sorted: Vec<&Item> = items.iter().collect();
     sorted.sort_by(|a, b| a.due_date.cmp(&b.due_date).then(a.id.cmp(&b.id)));
@@ -22,7 +32,12 @@ pub fn build_mermaid_due_timeline(items: &[Item], cutoff: NaiveDate) -> Result<S
             None => continue,
         };
         let label = format_label(item);
-        lines.push(format!("    {} : {}", due.format("%Y-%m-%d"), label));
+        lines.push(format!(
+            "    {} : {} :::{}",
+            due.format("%Y-%m-%d"),
+            label,
+            priority_class(&item.priority)
+        ));
     }
 
     Ok(lines.join("\n"))
@@ -34,7 +49,12 @@ pub fn mermaid_timeline_to_ascii(code: &str) -> String {
 
     for line in code.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed == "timeline" {
+        if trimmed.is_empty()
+            || trimmed == "timeline"
+            || trimmed.starts_with("%%{")
+            || trimmed.starts_with("classDef ")
+            || trimmed.starts_with("class ")
+        {
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("title ") {
@@ -42,7 +62,8 @@ pub fn mermaid_timeline_to_ascii(code: &str) -> String {
             continue;
         }
         if let Some((date, text)) = trimmed.split_once(" : ") {
-            entries.push((date.trim().to_string(), text.trim().to_string()));
+            let clean_text = text.split(" :::").next().unwrap_or(text).trim();
+            entries.push((date.trim().to_string(), clean_text.to_string()));
         }
     }
 
@@ -125,6 +146,41 @@ fn format_priority(priority: &Priority) -> &'static str {
     }
 }
 
+fn priority_class(priority: &Priority) -> &'static str {
+    match priority {
+        Priority::P1_Urgent => "p1",
+        Priority::P2_Important => "p2",
+        Priority::P3_Task => "p3",
+        Priority::None => "none",
+    }
+}
+
 fn sanitize_label(input: &str) -> String {
     input.replace(':', " - ").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Item, Priority, Status};
+    use chrono::{NaiveDate, Utc};
+
+    #[test]
+    fn mermaid_includes_classes_and_today() {
+        let item = Item {
+            id: 1,
+            bucket: "@default/work".to_string(),
+            content: "Test".to_string(),
+            priority: Priority::P1_Urgent,
+            status: Status::Open,
+            due_date: Some(NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let cutoff = NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let code = build_mermaid_due_timeline(&[item], cutoff).unwrap();
+        assert!(code.contains("classDef p1"));
+        assert!(code.contains(":::p1"));
+        assert!(code.contains(":::today"));
+    }
 }
