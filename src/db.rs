@@ -2,7 +2,7 @@ use crate::models::{Item, Priority, Status};
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{params_from_iter, Connection, OptionalExtension};
 use std::fs;
 use std::path::Path;
 
@@ -24,6 +24,22 @@ CREATE INDEX IF NOT EXISTS idx_workspace ON items(workspace);
 CREATE INDEX IF NOT EXISTS idx_status_priority ON items(status, priority);
 CREATE INDEX IF NOT EXISTS idx_due_date ON items(due_date);
 "#;
+
+const ALLOWED_UPDATE_COLUMNS: &[&str] = &[
+    "bucket",
+    "workspace",
+    "content",
+    "priority",
+    "status",
+    "due_date",
+];
+
+fn validate_column_name(name: &str) -> Result<()> {
+    if !ALLOWED_UPDATE_COLUMNS.contains(&name) {
+        return Err(anyhow::anyhow!("Invalid column name: {}", name));
+    }
+    Ok(())
+}
 
 pub struct Db {
     conn: Connection,
@@ -174,13 +190,16 @@ impl Db {
         let mut params: Vec<Value> = Vec::new();
 
         if let Some(bucket) = bucket {
+            validate_column_name("bucket")?;
             let workspace = workspace_from_bucket(&bucket)?;
+            validate_column_name("workspace")?;
             sets.push("bucket = ?".to_string());
             params.push(Value::from(bucket));
             sets.push("workspace = ?".to_string());
             params.push(Value::from(workspace));
         }
         if let Some(content) = content {
+            validate_column_name("content")?;
             let trimmed = content.trim();
             if trimmed.is_empty() {
                 return Err(anyhow::anyhow!("Note content cannot be empty"));
@@ -189,10 +208,12 @@ impl Db {
             params.push(Value::from(trimmed.to_string()));
         }
         if let Some(priority) = priority {
+            validate_column_name("priority")?;
             sets.push("priority = ?".to_string());
             params.push(Value::from(priority.as_str().to_string()));
         }
         if let Some(due_date) = due_date {
+            validate_column_name("due_date")?;
             sets.push("due_date = ?".to_string());
             match due_date {
                 Some(date) => params.push(Value::from(date.format("%Y-%m-%d").to_string())),
@@ -205,6 +226,7 @@ impl Db {
         }
 
         let now = Utc::now().to_rfc3339();
+        validate_column_name("updated_at")?;
         sets.push("updated_at = ?".to_string());
         params.push(Value::from(now));
         params.push(Value::from(id));

@@ -2,15 +2,15 @@ use crate::keystore::Keystore;
 use crate::models::Item;
 use crate::paths::KeeperPaths;
 use crate::security;
-use anyhow::{Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use chacha20poly1305::{
-    Key, XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit},
+    Key, XChaCha20Poly1305, XNonce,
 };
 use chrono::Utc;
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -63,7 +63,12 @@ pub fn read_plain_export(path: &Path) -> Result<PlainExportFile> {
     Ok(payload)
 }
 
-pub fn write_encrypted_export(paths: &KeeperPaths, path: &Path, password: &str) -> Result<()> {
+pub fn write_encrypted_export<S: AsRef<str>>(
+    paths: &KeeperPaths,
+    path: &Path,
+    password: S,
+) -> Result<()> {
+    let password_str = password.as_ref();
     let vault_db = fs::read(&paths.db_path)
         .map_err(|_| anyhow!("Vault database not found at {}", paths.db_path.display()))?;
     let keystore_json = fs::read_to_string(paths.keystore_path())
@@ -81,7 +86,7 @@ pub fn write_encrypted_export(paths: &KeeperPaths, path: &Path, password: &str) 
     OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce);
 
-    let mut key = security::derive_key_material(password, &salt)?;
+    let mut key = security::derive_key_material(password_str, &salt)?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
     let ciphertext = cipher
         .encrypt(XNonce::from_slice(&nonce), bundle_bytes.as_ref())
@@ -100,7 +105,8 @@ pub fn write_encrypted_export(paths: &KeeperPaths, path: &Path, password: &str) 
     Ok(())
 }
 
-pub fn read_encrypted_export(path: &Path, password: &str) -> Result<(Vec<u8>, String)> {
+pub fn read_encrypted_export<S: AsRef<str>>(path: &Path, password: S) -> Result<(Vec<u8>, String)> {
+    let password_str = password.as_ref();
     let data = fs::read_to_string(path)?;
     let export: EncryptedExportFile = serde_json::from_str(&data)?;
     if export.version != EXPORT_VERSION {
@@ -113,7 +119,7 @@ pub fn read_encrypted_export(path: &Path, password: &str) -> Result<(Vec<u8>, St
         .decode(export.ciphertext)
         .map_err(|_| anyhow!("Invalid ciphertext encoding"))?;
 
-    let mut key = security::derive_key_material(password, &salt)?;
+    let mut key = security::derive_key_material(password_str, &salt)?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
     let plaintext = cipher
         .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())

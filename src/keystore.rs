@@ -1,12 +1,12 @@
-use anyhow::{Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use bip39::{Language, Mnemonic};
 use chacha20poly1305::{
-    Key, XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit},
+    Key, XChaCha20Poly1305, XNonce,
 };
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -55,7 +55,8 @@ impl Keystore {
         Ok(())
     }
 
-    pub fn create_new(password: &str) -> Result<(Self, String, [u8; MASTER_KEY_LEN])> {
+    pub fn create_new<S: AsRef<str>>(password: S) -> Result<(Self, String, [u8; MASTER_KEY_LEN])> {
+        let password_str = password.as_ref();
         let master_key = security::generate_master_key();
         let recovery = Mnemonic::generate_in(Language::English, 24)?.to_string();
 
@@ -70,7 +71,7 @@ impl Keystore {
         OsRng.fill_bytes(&mut nonce_recovery);
 
         let mut wrapped_master_password =
-            wrap_master_key(password, &salt_password, &nonce_password, &master_key)?;
+            wrap_master_key(password_str, &salt_password, &nonce_password, &master_key)?;
         let mut wrapped_master_recovery =
             wrap_master_key(&recovery, &salt_recovery, &nonce_recovery, &master_key)?;
 
@@ -90,10 +91,11 @@ impl Keystore {
         Ok((store, recovery, master_key))
     }
 
-    pub fn create_from_master_key(
-        password: &str,
+    pub fn create_from_master_key<S: AsRef<str>>(
+        password: S,
         master_key: &[u8; MASTER_KEY_LEN],
     ) -> Result<(Self, String)> {
+        let password_str = password.as_ref();
         let recovery = Mnemonic::generate_in(Language::English, 24)?.to_string();
 
         let mut salt_password = [0u8; SALT_LEN];
@@ -107,7 +109,7 @@ impl Keystore {
         OsRng.fill_bytes(&mut nonce_recovery);
 
         let mut wrapped_master_password =
-            wrap_master_key(password, &salt_password, &nonce_password, master_key)?;
+            wrap_master_key(password_str, &salt_password, &nonce_password, master_key)?;
         let mut wrapped_master_recovery =
             wrap_master_key(&recovery, &salt_recovery, &nonce_recovery, master_key)?;
 
@@ -127,17 +129,17 @@ impl Keystore {
         Ok((store, recovery))
     }
 
-    pub fn unwrap_with_password(&self, password: &str) -> Result<[u8; MASTER_KEY_LEN]> {
+    pub fn unwrap_with_password<S: AsRef<str>>(&self, password: S) -> Result<[u8; MASTER_KEY_LEN]> {
         unwrap_master_key(
-            password,
+            password.as_ref(),
             &self.salt_password,
             &self.nonce_password,
             &self.wrapped_master_password,
         )
     }
 
-    pub fn unwrap_with_recovery(&self, recovery: &str) -> Result<[u8; MASTER_KEY_LEN]> {
-        let mut normalized = normalize_recovery_code(recovery);
+    pub fn unwrap_with_recovery<S: AsRef<str>>(&self, recovery: S) -> Result<[u8; MASTER_KEY_LEN]> {
+        let mut normalized = normalize_recovery_code(recovery.as_ref());
         let result = unwrap_master_key(
             &normalized,
             &self.salt_recovery,
@@ -148,17 +150,19 @@ impl Keystore {
         result
     }
 
-    pub fn rewrap_password(
+    pub fn rewrap_password<S: AsRef<str>>(
         &mut self,
-        password: &str,
+        password: S,
         master_key: &[u8; MASTER_KEY_LEN],
     ) -> Result<()> {
+        let password_str = password.as_ref();
         let mut salt_password = [0u8; SALT_LEN];
         let mut nonce_password = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut salt_password);
         OsRng.fill_bytes(&mut nonce_password);
 
-        let mut wrapped = wrap_master_key(password, &salt_password, &nonce_password, master_key)?;
+        let mut wrapped =
+            wrap_master_key(password_str, &salt_password, &nonce_password, master_key)?;
 
         self.salt_password = STANDARD_NO_PAD.encode(salt_password);
         self.nonce_password = STANDARD_NO_PAD.encode(nonce_password);
@@ -222,7 +226,7 @@ fn decode_fixed(encoded: &str, expected_len: usize, label: &str) -> Result<Vec<u
     Ok(decoded)
 }
 
-fn normalize_recovery_code(code: &str) -> String {
+pub(crate) fn normalize_recovery_code(code: &str) -> String {
     code.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

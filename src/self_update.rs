@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,6 +6,12 @@ use std::process::Command;
 
 const REPO_URL: &str = "https://github.com/thoughtoinnovate/keeper";
 const BIN_NAME: &str = "keeper";
+
+// Ed25519 public key for release signature verification (SWAP-005)
+// This is the minisign public key for verifying keeper releases
+const RELEASE_PUBKEY: &str = "RWQfM2V3GXz+nRZv7D+K/s+xe3NGW5h8r2uJ0Q5x2G4=";
+
+use minisign::{verify, PublicKeyBox};
 
 pub struct SelfUpdateOptions {
     pub tag: Option<String>,
@@ -29,6 +35,11 @@ pub fn run_self_update(opts: SelfUpdateOptions) -> Result<()> {
     let checksum_url = match normalized_tag.as_deref() {
         Some(tag) => format!("{REPO_URL}/releases/download/{tag}/{checksum_name}"),
         None => format!("{REPO_URL}/releases/latest/download/{checksum_name}"),
+    };
+    let sig_name = format!("{}.minisig", asset_name);
+    let sig_url = match normalized_tag.as_deref() {
+        Some(tag) => format!("{REPO_URL}/releases/download/{tag}/{sig_name}"),
+        None => format!("{REPO_URL}/releases/latest/download/{sig_name}"),
     };
 
     ensure_prereqs(target.is_windows)?;
@@ -56,7 +67,15 @@ pub fn run_self_update(opts: SelfUpdateOptions) -> Result<()> {
     )
     .context("Checksum download failed")?;
 
-    verify_checksum(&asset_path, &checksum_path)?;
+    let sig_path = tmp_dir.path.join(&sig_name);
+    log_info(&format!("Downloading signature {sig_url}"));
+    run_cmd(
+        "curl",
+        &["-fsSL", &sig_url, "-o", sig_path.to_str().unwrap()],
+    )
+    .context("Signature download failed")?;
+
+    verify_release(&asset_path, &checksum_path, &sig_path)?;
 
     log_info("Extracting release archive");
     extract_archive(&asset_path, &tmp_dir.path, &target)?;
@@ -198,6 +217,42 @@ fn verify_checksum(asset_path: &Path, checksum_path: &Path) -> Result<()> {
             "Checksum mismatch. Expected {expected}, got {actual}"
         ));
     }
+    Ok(())
+}
+
+fn verify_signature(asset_path: &Path, sig_path: &Path) -> Result<()> {
+    // Load public key from embedded base64
+    let pk_box = PublicKeyBox::from_string(RELEASE_PUBKEY)
+        .map_err(|e| anyhow!("Invalid embedded public key: {e}"))?;
+    let pk = pk_box
+        .into_public_key()
+        .map_err(|e| anyhow!("Failed to parse public key: {e}"))?;
+
+    // Load signature from file
+    let sig_data = fs::read_to_string(sig_path).context("Failed to read signature file")?;
+    let signature_box = minisign::SignatureBox::from_string(&sig_data)
+        .map_err(|e| anyhow!("Invalid signature format: {e}"))?;
+
+    // Open data file for verification
+    let data_file = fs::File::open(asset_path)
+        .context("Failed to open downloaded asset for signature verification")?;
+    let data_reader = std::io::BufReader::new(data_file);
+
+    // Verify signature (trusted=true, legacy=false, prehash=false)
+    verify(&pk, &signature_box, data_reader, true, false, false).map_err(|_| {
+        anyhow!("Signature verification failed. The release may have been tampered with.")
+    })?;
+
+    Ok(())
+}
+
+fn verify_release(asset_path: &Path, checksum_path: &Path, sig_path: &Path) -> Result<()> {
+    // Verify SHA256 checksum first (integrity)
+    verify_checksum(asset_path, checksum_path)?;
+
+    // Verify Ed25519 signature (authenticity)
+    verify_signature(asset_path, sig_path)?;
+
     Ok(())
 }
 

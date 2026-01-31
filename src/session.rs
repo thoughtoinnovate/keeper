@@ -1,9 +1,10 @@
+use crate::backup::BackupManager;
 use crate::keystore::Keystore;
 use crate::logger;
 use crate::paths::KeeperPaths;
 use crate::{client, prompt, security};
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::Zeroize;
@@ -22,6 +23,7 @@ pub fn unlock_or_init_master_key(paths: &KeeperPaths) -> Result<UnlockOutcome> {
             ));
         }
         let mut password = prompt::prompt_password_confirm()?;
+        security::validate_password_strength(&password)?;
         let (keystore, recovery_code, master_key) = Keystore::create_new(&password)?;
         keystore.save(paths.keystore_path())?;
         password.zeroize();
@@ -77,4 +79,20 @@ pub fn ensure_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Res
     }
     let pid = start_daemon(paths, master_key, debug)?;
     Ok(Some(pid))
+}
+
+pub fn create_vault_backup(paths: &KeeperPaths) -> Result<Option<String>> {
+    let backup_mgr = BackupManager::new(paths.base_dir.clone());
+
+    if !paths.db_path.exists() || !paths.keystore_path().exists() {
+        return Ok(None);
+    }
+
+    match backup_mgr.create_backup(&paths.db_path, paths.keystore_path()) {
+        Ok(backup_dir) => Ok(Some(format!("Backup created at {}", backup_dir.display()))),
+        Err(e) => {
+            logger::error(&format!("Failed to create backup: {}", e));
+            Ok(None)
+        }
+    }
 }

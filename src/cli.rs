@@ -17,6 +17,12 @@ pub struct Cli {
         help = "Vault directory or vault.db path"
     )]
     pub vault: Option<PathBuf>,
+    #[arg(
+        long,
+        global = true,
+        help = "Show recovery code on screen (default: secure display)"
+    )]
+    pub show_recovery: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
 }

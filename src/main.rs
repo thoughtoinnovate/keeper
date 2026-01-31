@@ -1,3 +1,4 @@
+mod backup;
 mod cli;
 mod client;
 mod config;
@@ -11,6 +12,7 @@ mod logger;
 mod models;
 mod paths;
 mod prompt;
+mod sanitize;
 mod security;
 mod self_update;
 mod session;
@@ -43,7 +45,7 @@ fn run() -> Result<()> {
     let paths = KeeperPaths::new(cli.vault.as_deref())?;
 
     match cli.command {
-        Some(Commands::Start) => cmd_start(&paths, cli.debug),
+        Some(Commands::Start) => cmd_start(&paths, cli.debug, cli.show_recovery),
         Some(Commands::Stop) => cmd_stop(&paths),
         Some(Commands::Status) => cmd_status(&paths),
         Some(Commands::Passwd) => cmd_passwd(&paths),
@@ -66,7 +68,7 @@ fn run() -> Result<()> {
     }
 }
 
-fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
+fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()> {
     if client::daemon_running(paths) {
         println!(
             "✅ Daemon already running. Vault: {}. Socket: {}",
@@ -78,7 +80,11 @@ fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
 
     let outcome = session::unlock_or_init_master_key(paths)?;
     if let Some(recovery) = outcome.recovery_code.as_ref() {
-        println!("🧩 Recovery Code (store this safely):\n{recovery}");
+        if show_recovery {
+            println!("🧩 Recovery Code (store this safely):\n{recovery}");
+        } else {
+            display_recovery_secure(recovery)?;
+        }
     }
     let pid = session::start_daemon(paths, &outcome.master_key, debug)?;
     let mut master_key = outcome.master_key;
@@ -94,6 +100,31 @@ fn cmd_start(paths: &KeeperPaths, debug: bool) -> Result<()> {
         pid,
         paths.socket_path_display()
     );
+
+    Ok(())
+}
+
+fn display_recovery_secure(recovery: &str) -> Result<()> {
+    use std::io::{self, IsTerminal, Write};
+
+    print!("🧩 Recovery Code: [{} characters]", recovery.len());
+    io::stdout().flush()?;
+
+    if io::stdin().is_terminal() {
+        print!("\nPress Enter when you've saved the code securely...");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        #[cfg(unix)]
+        {
+            print!("\x1b[2J\x1b[H");
+            io::stdout().flush()?;
+        }
+    } else {
+        println!();
+    }
 
     Ok(())
 }
@@ -228,7 +259,7 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
         bucket: spec.bucket,
         content: spec.content,
         priority: spec.priority,
-        due_date: spec.due_date.flatten(),
+        due_date: spec.due_date.map(|opt| opt),
         clear_due_date: matches!(spec.due_date, Some(None)),
     };
     let response = client::send_request(paths, &request)?;
@@ -382,9 +413,14 @@ fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
     if !client::daemon_running(paths) {
         return Err(anyhow!("Daemon not running. Start the vault first."));
     }
+
+    if let Some(backup_msg) = session::create_vault_backup(paths)? {
+        println!("✓ {backup_msg}");
+    }
+
     let mut request = DaemonRequest::RotatePassword {
-        current_password: prompt::prompt_current_password()?,
-        new_password: prompt::prompt_password_confirm()?,
+        current_password: prompt::prompt_current_password()?.into(),
+        new_password: prompt::prompt_password_confirm()?.into(),
     };
     let response = client::send_request(paths, &request)?;
     if let DaemonRequest::RotatePassword {
@@ -411,22 +447,17 @@ fn cmd_passwd(paths: &KeeperPaths) -> Result<()> {
 }
 
 fn cmd_recover(paths: &KeeperPaths, args: cli::RecoverArgs) -> Result<()> {
-    let keystore = keystore::Keystore::load(paths.keystore_path())
+    let mut keystore = keystore::Keystore::load(paths.keystore_path())
         .context("Keystore not found; start the vault first")?;
-    let mut recovery = match args.code {
-        Some(code) => code,
-        None => prompt::prompt_recovery_code()?,
+    let recovery = match args.code {
+        Some(code) => keystore::normalize_recovery_code(&code),
+        None => prompt::prompt_recovery_code()?.as_str(),
     };
-    let master_key = keystore.unwrap_with_recovery(&recovery)?;
-    recovery.zeroize();
+    let master_key = keystore.unwrap_with_recovery(recovery)?;
 
-    let mut new_password = prompt::prompt_password_confirm()?;
-    let mut keystore = keystore;
+    let new_password = prompt::prompt_password_confirm()?;
     keystore.rewrap_password(&new_password, &master_key)?;
     keystore.save(paths.keystore_path())?;
-    new_password.zeroize();
-    let mut master_key = master_key;
-    master_key.zeroize();
 
     println!("✅ Password reset. You can now run `keeper start`.");
     Ok(())
@@ -491,14 +522,19 @@ fn cmd_keystore_rebuild(paths: &KeeperPaths) -> Result<()> {
             "Daemon not running. Start it first to rebuild keystore."
         ));
     }
-    let mut new_password = prompt::prompt_password_confirm()?;
+
+    if let Some(backup_msg) = session::create_vault_backup(paths)? {
+        println!("✓ {backup_msg}");
+    }
+
+    let new_password = prompt::prompt_password_confirm()?;
+
     let response = client::send_request(
         paths,
         &DaemonRequest::RebuildKeystore {
-            new_password: new_password.clone(),
+            new_password: new_password.into(),
         },
     )?;
-    new_password.zeroize();
     match response {
         DaemonResponse::OkRecoveryCode(code) => {
             println!("✅ Keystore rebuilt.");

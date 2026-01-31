@@ -1,5 +1,5 @@
 use crate::paths::KeeperPaths;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -25,10 +25,12 @@ impl Config {
         }
         let data = fs::read_to_string(&paths.config_path)?;
         let config: Config = serde_json::from_str(&data).unwrap_or_default();
+        validate_workspace(&config.default_workspace)?;
         Ok(config)
     }
 
     pub fn save(&self, paths: &KeeperPaths) -> Result<()> {
+        validate_workspace(&self.default_workspace)?;
         if let Some(parent) = paths.config_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -47,4 +49,23 @@ impl Config {
 
 pub fn default_workspace() -> &'static str {
     DEFAULT_WORKSPACE
+}
+
+fn validate_workspace(workspace: &str) -> Result<()> {
+    if !workspace.starts_with('@') {
+        return Err(anyhow!("Workspace must start with @"));
+    }
+    if workspace.len() < 2 {
+        return Err(anyhow!("Workspace name too short (minimum 2 characters)"));
+    }
+    if workspace.len() > 50 {
+        return Err(anyhow!("Workspace name too long (maximum 50 characters)"));
+    }
+    if !workspace
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '@' || c == '_' || c == '-')
+    {
+        return Err(anyhow!("Workspace contains invalid characters"));
+    }
+    Ok(())
 }

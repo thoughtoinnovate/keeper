@@ -389,7 +389,7 @@ fn handle_repl_command(
                 bucket: spec.bucket,
                 content: spec.content,
                 priority: spec.priority,
-                due_date: spec.due_date.flatten(),
+                due_date: spec.due_date.map(|opt| opt),
                 clear_due_date: matches!(spec.due_date, Some(None)),
             };
             let response = send_request(paths, &request)?;
@@ -446,14 +446,14 @@ fn handle_repl_command(
                         eprintln!("Daemon not running. Start it first to rebuild keystore.");
                         return Ok(());
                     }
-                    let mut new_password = prompt::prompt_password_confirm()?;
+                    let new_password = prompt::prompt_password_confirm()?;
                     let response = send_request(
                         paths,
                         &DaemonRequest::RebuildKeystore {
-                            new_password: new_password.clone(),
+                            new_password: new_password.into(),
                         },
                     )?;
-                    new_password.zeroize();
+                    // new_password is consumed by into(), no need to zeroize separately
                     match response {
                         crate::ipc::DaemonResponse::OkRecoveryCode(code) => {
                             println!("✅ Keystore rebuilt.");

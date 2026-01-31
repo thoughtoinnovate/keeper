@@ -12,7 +12,6 @@ const DOCS_MIME: &str = "text/markdown";
 struct Config {
     keeper_bin: String,
     vault: Option<String>,
-    password: Option<String>,
     read_only: bool,
     allow_password_ops: bool,
     auto_start: bool,
@@ -22,14 +21,14 @@ impl Config {
     fn from_env() -> Self {
         let keeper_bin = env::var("KEEPER_BIN").unwrap_or_else(|_| "keeper".to_string());
         let vault = env::var("KEEPER_VAULT").ok();
-        let password = resolve_password();
+
         let read_only = env_bool("KEEPER_READONLY", true);
         let allow_password_ops = env_bool("KEEPER_ALLOW_PASSWORD_OPS", false);
         let auto_start = env_bool("KEEPER_AUTO_START", false);
+
         Self {
             keeper_bin,
             vault,
-            password,
             read_only,
             allow_password_ops,
             auto_start,
@@ -39,20 +38,8 @@ impl Config {
 
 fn env_bool(key: &str, default: bool) -> bool {
     match env::var(key) {
-        Ok(val) => matches!(
-            val.to_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
+        Ok(val) => matches!(val.to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
         Err(_) => default,
-    }
-}
-
-fn resolve_password() -> Option<String> {
-    let raw = env::var("KEEPER_PASSWORD").ok()?;
-    if let Some(rest) = raw.strip_prefix("env:") {
-        env::var(rest).ok()
-    } else {
-        Some(raw)
     }
 }
 
@@ -140,7 +127,11 @@ fn handle_request(config: &Config, req: RpcRequest) -> Result<Value, RpcError<'s
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if uri != DOCS_URI {
-                return Err(RpcError { code: -32602, message: "Unknown resource", data: None });
+                return Err(RpcError {
+                    code: -32602,
+                    message: "Unknown resource",
+                    data: None,
+                });
             }
             Ok(json!({
                 "contents": [
@@ -155,20 +146,43 @@ fn handle_request(config: &Config, req: RpcRequest) -> Result<Value, RpcError<'s
                 .as_ref()
                 .and_then(|p| p.get("name"))
                 .and_then(|v| v.as_str())
-                .ok_or(RpcError { code: -32602, message: "Missing tool name", data: None })?;
-            let args = req.params.and_then(|p| p.get("arguments").cloned()).unwrap_or(json!({}));
+                .ok_or(RpcError {
+                    code: -32602,
+                    message: "Missing tool name",
+                    data: None,
+                })?;
+            let args = req
+                .params
+                .and_then(|p| p.get("arguments").cloned())
+                .unwrap_or(json!({}));
             let result = call_tool(config, tool, args)?;
             Ok(json!({ "content": [{ "type": "text", "text": result }] }))
         }
-        _ => Err(RpcError { code: -32601, message: "Method not found", data: None }),
+        _ => Err(RpcError {
+            code: -32601,
+            message: "Method not found",
+            data: None,
+        }),
     }
 }
 
 fn tool_list() -> Vec<Value> {
     vec![
-        tool("keeper.status", "Check daemon status", json!({"type":"object","properties":{"vault":{"type":"string"}}})),
-        tool("keeper.start", "Start daemon", json!({"type":"object","properties":{"vault":{"type":"string"}}})),
-        tool("keeper.stop", "Stop daemon", json!({"type":"object","properties":{"vault":{"type":"string"}}})),
+        tool(
+            "keeper.status",
+            "Check daemon status",
+            json!({"type":"object","properties":{"vault":{"type":"string"}}}),
+        ),
+        tool(
+            "keeper.start",
+            "Start daemon",
+            json!({"type":"object","properties":{"vault":{"type":"string"}}}),
+        ),
+        tool(
+            "keeper.stop",
+            "Stop daemon",
+            json!({"type":"object","properties":{"vault":{"type":"string"}}}),
+        ),
         tool(
             "keeper.note",
             "Create a note/task",
@@ -229,7 +243,11 @@ fn tool_list() -> Vec<Value> {
                 "vault":{"type":"string"}
             }}),
         ),
-        tool("keeper.archive", "List archived items", json!({"type":"object","properties":{"vault":{"type":"string"}}})),
+        tool(
+            "keeper.archive",
+            "List archived items",
+            json!({"type":"object","properties":{"vault":{"type":"string"}}}),
+        ),
         tool(
             "keeper.dash_due_timeline",
             "Due-date timeline (next 15 days)",
@@ -266,13 +284,20 @@ fn tool(name: &str, description: &str, schema: Value) -> Value {
 fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcError<'static>> {
     match name {
         "keeper.status" => run_keeper(config, &["status"], None, args.get("vault"))?,
-        "keeper.start" => run_keeper_start(config, args.get("vault"))?,
+        "keeper.start" => {
+            // Auto-start with passwords removed for security (SWAP-004)
+            // Users must start daemon interactively or use system keyring
+            run_keeper(config, &["start"], None, args.get("vault"))?
+        }
         "keeper.stop" => run_keeper(config, &["stop"], None, args.get("vault"))?,
         "keeper.note" => {
             ensure_daemon(config, args.get("vault"))?;
             require_write(config)?;
             let mut tokens = vec!["note".to_string()];
-            let content = args.get("content").and_then(|v| v.as_str()).ok_or(err("Missing content"))?;
+            let content = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing content"))?;
             tokens.push(content.to_string());
             if let Some(bucket) = args.get("bucket").and_then(|v| v.as_str()) {
                 tokens.push(normalize_bucket(bucket));
@@ -302,7 +327,10 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
         "keeper.update" => {
             ensure_daemon(config, args.get("vault"))?;
             require_write(config)?;
-            let id = args.get("id").and_then(|v| v.as_i64()).ok_or(err("Missing id"))?;
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .ok_or(err("Missing id"))?;
             let mut tokens = vec!["update".to_string(), id.to_string()];
             if let Some(content) = args.get("content").and_then(|v| v.as_str()) {
                 tokens.push(content.to_string());
@@ -325,8 +353,14 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
         "keeper.mark" => {
             ensure_daemon(config, args.get("vault"))?;
             require_write(config)?;
-            let id = args.get("id").and_then(|v| v.as_i64()).ok_or(err("Missing id"))?;
-            let status = args.get("status").and_then(|v| v.as_str()).ok_or(err("Missing status"))?;
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .ok_or(err("Missing id"))?;
+            let status = args
+                .get("status")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing status"))?;
             run_keeper(
                 config,
                 &["mark", &id.to_string(), status],
@@ -342,10 +376,23 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
                 if args.get("confirm").and_then(|v| v.as_bool()) != Some(true) {
                     return Err(err("Missing confirm=true for delete all"));
                 }
-                run_keeper(config, &["delete", "--all", "--yes"], None, args.get("vault"))?
+                run_keeper(
+                    config,
+                    &["delete", "--all", "--yes"],
+                    None,
+                    args.get("vault"),
+                )?
             } else {
-                let id = args.get("id").and_then(|v| v.as_i64()).ok_or(err("Missing id"))?;
-                run_keeper(config, &["delete", &id.to_string()], None, args.get("vault"))?
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_i64())
+                    .ok_or(err("Missing id"))?;
+                run_keeper(
+                    config,
+                    &["delete", &id.to_string()],
+                    None,
+                    args.get("vault"),
+                )?
             }
         }
         "keeper.undo" => {
@@ -365,7 +412,12 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
             ensure_daemon(config, args.get("vault"))?;
             let mermaid = args.get("mermaid").and_then(|v| v.as_bool()) == Some(true);
             if mermaid {
-                run_keeper(config, &["dash", "due_timeline", "--mermaid"], None, args.get("vault"))?
+                run_keeper(
+                    config,
+                    &["dash", "due_timeline", "--mermaid"],
+                    None,
+                    args.get("vault"),
+                )?
             } else {
                 run_keeper(config, &["dash", "due_timeline"], None, args.get("vault"))?
             }
@@ -375,8 +427,14 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
             if !config.allow_password_ops {
                 return Err(err("Password operations disabled"));
             }
-            let current = args.get("current").and_then(|v| v.as_str()).ok_or(err("Missing current password"))?;
-            let new = args.get("new").and_then(|v| v.as_str()).ok_or(err("Missing new password"))?;
+            let current = args
+                .get("current")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing current password"))?;
+            let new = args
+                .get("new")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing new password"))?;
             let stdin = format!("{current}\n{new}\n{new}\n");
             run_keeper(config, &["passwd"], Some(&stdin), args.get("vault"))?
         }
@@ -384,8 +442,14 @@ fn call_tool(config: &Config, name: &str, args: Value) -> Result<String, RpcErro
             if !config.allow_password_ops {
                 return Err(err("Password operations disabled"));
             }
-            let code = args.get("code").and_then(|v| v.as_str()).ok_or(err("Missing recovery code"))?;
-            let new = args.get("new").and_then(|v| v.as_str()).ok_or(err("Missing new password"))?;
+            let code = args
+                .get("code")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing recovery code"))?;
+            let new = args
+                .get("new")
+                .and_then(|v| v.as_str())
+                .ok_or(err("Missing new password"))?;
             let stdin = format!("{code}\n{new}\n{new}\n");
             run_keeper(config, &["recover"], Some(&stdin), args.get("vault"))?
         }
@@ -435,29 +499,11 @@ fn ensure_daemon(config: &Config, vault: Option<&Value>) -> Result<(), RpcError<
     if status.contains("Daemon running") {
         return Ok(());
     }
-    if !config.auto_start {
-        return Err(err("Daemon not running and auto-start disabled"));
-    }
-    run_keeper_start(config, vault)?;
-    let status = run_keeper(config, &["status"], None, vault)?;
-    if status.contains("Daemon running") {
-        Ok(())
-    } else {
-        Err(err("Failed to start daemon"))
-    }
-}
-
-fn run_keeper_start(config: &Config, vault: Option<&Value>) -> Result<String, RpcError<'static>> {
-    let password = config
-        .password
-        .as_ref()
-        .ok_or(err("Auto-start requires password source"))?;
-    let stdin = if keystore_exists(config, vault) {
-        format!("{password}\n")
-    } else {
-        format!("{password}\n{password}\n")
-    };
-    run_keeper(config, &["start"], Some(&stdin), vault)
+    // Auto-start with passwords removed for security (SWAP-004)
+    // Users must start daemon interactively
+    Err(err(
+        "Daemon not running. Please start keeper manually: keeper start",
+    ))
 }
 
 fn keystore_exists(config: &Config, vault: Option<&Value>) -> bool {
@@ -537,9 +583,16 @@ fn string_args(tokens: &[String]) -> Vec<&str> {
 }
 
 fn err(message: &'static str) -> RpcError<'static> {
-    RpcError { code: -32602, message, data: None }
+    RpcError {
+        code: -32602,
+        message,
+        data: None,
+    }
 }
 
 fn docs_text() -> &'static str {
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../MCP_AGENT_GUIDE.md"))
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../MCP_AGENT_GUIDE.md"
+    ))
 }

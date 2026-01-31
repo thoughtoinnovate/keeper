@@ -9,8 +9,11 @@ use chrono::Utc;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Instant;
 use zeroize::Zeroize;
+
+const MAX_IPC_MSG_SIZE: usize = 10_485_760; // 10MB
 
 pub fn run_daemon(
     mut master_key: [u8; security::MASTER_KEY_LEN],
@@ -18,7 +21,47 @@ pub fn run_daemon(
 ) -> Result<()> {
     logger::debug("Daemon initializing");
     paths.ensure_base_dir()?;
+
+    #[cfg(unix)]
+    {
+        use libc::{mlockall, MCL_CURRENT, MCL_FUTURE};
+        unsafe {
+            if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
+                return Err(anyhow::anyhow!(
+                    "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
+                     Increase ulimit -l or run with CAP_IPC_LOCK permission. \
+                     Exiting for security."
+                ));
+            }
+        }
+    }
+
     paths.remove_socket_if_exists();
+
+    let listener = loop {
+        match UnixListener::bind(&paths.socket_path) {
+            Ok(l) => break l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if let Ok(metadata) = std::fs::metadata(&paths.socket_path) {
+                        let current_uid = unsafe { libc::getuid() };
+                        if metadata.uid() != current_uid {
+                            return Err(anyhow::anyhow!(
+                                "Socket exists but owned by another user. Remove {}",
+                                paths.socket_path.display()
+                            ));
+                        }
+                    }
+                }
+                paths.remove_socket_if_exists();
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
+    paths.set_socket_permissions()?;
 
     let mut db_key = security::derive_db_key_hex(&master_key);
     let db = match Db::open(&paths.db_path, &db_key) {
@@ -35,18 +78,24 @@ pub fn run_daemon(
         logger::debug(&format!("Purged {count} archived items"));
     }
 
-    let listener = match UnixListener::bind(&paths.socket_path) {
-        Ok(listener) => listener,
-        Err(err) => {
-            logger::error(&format!("Failed to bind socket: {err}"));
-            return Err(err.into());
-        }
-    };
-    paths.set_socket_permissions()?;
-
     let running = Arc::new(AtomicBool::new(true));
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let last_activity = Arc::new(AtomicU64::new(start_time));
+    let password_attempts = Arc::new(AtomicU64::new(0));
+    let last_password_attempt = Arc::new(AtomicU64::new(0));
+    let connection_count = Arc::new(AtomicUsize::new(0));
+    const MAX_CONNECTIONS: usize = 50;
 
     while running.load(Ordering::SeqCst) {
+        if connection_count.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+            logger::error("Maximum connections reached");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+
         let (stream, _) = match listener.accept() {
             Ok(pair) => pair,
             Err(err) => {
@@ -54,10 +103,29 @@ pub fn run_daemon(
                 continue;
             }
         };
+
+        let last_activity = last_activity.clone();
+        let password_attempts = password_attempts.clone();
+        let last_password_attempt = last_password_attempt.clone();
+        let connection_count = connection_count.clone();
+
+        connection_count.fetch_add(1, Ordering::SeqCst);
+
         logger::debug("Accepted IPC connection");
-        if let Err(err) = handle_connection(stream, &db, &running, paths, &master_key) {
+        if let Err(err) = handle_connection(
+            stream,
+            &db,
+            &running,
+            paths,
+            &master_key,
+            &last_activity,
+            &password_attempts,
+            &last_password_attempt,
+        ) {
             logger::error(&format!("IPC handler error: {err}"));
         }
+
+        connection_count.fetch_sub(1, Ordering::SeqCst);
     }
 
     master_key.zeroize();
@@ -72,10 +140,43 @@ fn handle_connection(
     running: &AtomicBool,
     paths: &KeeperPaths,
     master_key: &[u8; security::MASTER_KEY_LEN],
+    last_activity: &AtomicU64,
+    password_attempts: &AtomicU64,
+    last_password_attempt: &AtomicU64,
 ) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let last = last_activity.load(Ordering::SeqCst);
+
+    if now - last > security::INACTIVITY_TIMEOUT_SECONDS {
+        return Err(anyhow::anyhow!(
+            "Vault locked due to inactivity. Restart daemon."
+        ));
+    }
+
     let mut stream = stream;
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
+    
+    // Bounded read with size limit
+    let mut buf = Vec::with_capacity(8192);
+    let mut bytes_read = 0;
+    let mut chunk = [0u8; 8192];
+    
+    loop {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 { break; }
+        
+        bytes_read += n;
+        if bytes_read > MAX_IPC_MSG_SIZE {
+            logger::error("IPC message exceeds 10MB limit");
+            let resp = DaemonResponse::Error("Message too large (max 10MB)".to_string());
+            send_response(&mut stream, &resp)?;
+            return Ok(());
+        }
+        
+        buf.extend_from_slice(&chunk[..n]);
+    }
 
     let req: DaemonRequest = match serde_json::from_slice(&buf) {
         Ok(req) => req,
@@ -87,6 +188,26 @@ fn handle_connection(
         }
     };
 
+    let is_password_operation = matches!(
+        req,
+        DaemonRequest::RotatePassword { .. } | DaemonRequest::RebuildKeystore { .. }
+    );
+
+    if is_password_operation {
+        let attempts = password_attempts.fetch_add(1, Ordering::SeqCst);
+        let last_attempt = last_password_attempt.swap(now, Ordering::SeqCst);
+
+        if now - last_attempt < 30 {
+            if attempts >= 3 {
+                let lockout_duration = 30u64.pow((attempts.saturating_sub(2)).min(6) as u32);
+                return Err(anyhow::anyhow!(
+                    "Too many failed password attempts. Try again in {} seconds.",
+                    lockout_duration
+                ));
+            }
+        }
+    }
+
     logger::debug("Handling IPC request");
     let response = match req {
         DaemonRequest::CreateNote {
@@ -94,15 +215,18 @@ fn handle_connection(
             content,
             priority,
             due_date,
-        } => match db.insert_item(&bucket, &content, priority, due_date) {
-            Ok(InsertOutcome::Inserted(id)) => {
-                DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})"))
+        } => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.insert_item(&bucket, &content, priority, due_date) {
+                Ok(InsertOutcome::Inserted(id)) => {
+                    DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})"))
+                }
+                Ok(InsertOutcome::Duplicate(id)) => {
+                    DaemonResponse::OkMessage(format!("[=] Duplicate ignored in {bucket} (ID: {id})"))
+                }
+                Err(err) => DaemonResponse::Error(format!("Failed to save note: {err}")),
             }
-            Ok(InsertOutcome::Duplicate(id)) => {
-                DaemonResponse::OkMessage(format!("[=] Duplicate ignored in {bucket} (ID: {id})"))
-            }
-            Err(err) => DaemonResponse::Error(format!("Failed to save note: {err}")),
-        },
+        }
         DaemonRequest::GetItems {
             bucket_filter,
             priority_filter,
@@ -110,26 +234,35 @@ fn handle_connection(
             date_cutoff,
             include_notes,
             notes_only,
-        } => match db.get_items(
-            bucket_filter,
-            priority_filter,
-            status_filter,
-            date_cutoff,
-            include_notes,
-            notes_only,
-        ) {
-            Ok(items) => DaemonResponse::OkItems(items),
-            Err(err) => DaemonResponse::Error(format!("Failed to fetch items: {err}")),
-        },
-        DaemonRequest::ListBuckets => match db.list_buckets() {
-            Ok(buckets) => DaemonResponse::OkBuckets(buckets),
-            Err(err) => DaemonResponse::Error(format!("Failed to list buckets: {err}")),
-        },
-        DaemonRequest::UpdateStatus { id, new_status } => match db.update_status(id, new_status) {
-            Ok(true) => DaemonResponse::OkMessage("Updated status".to_string()),
-            Ok(false) => DaemonResponse::Error("Item not found".to_string()),
-            Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
-        },
+        } => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.get_items(
+                bucket_filter,
+                priority_filter,
+                status_filter,
+                date_cutoff,
+                include_notes,
+                notes_only,
+            ) {
+                Ok(items) => DaemonResponse::OkItems(items),
+                Err(err) => DaemonResponse::Error(format!("Failed to fetch items: {err}")),
+            }
+        }
+        DaemonRequest::ListBuckets => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.list_buckets() {
+                Ok(buckets) => DaemonResponse::OkBuckets(buckets),
+                Err(err) => DaemonResponse::Error(format!("Failed to list buckets: {err}")),
+            }
+        }
+        DaemonRequest::UpdateStatus { id, new_status } => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.update_status(id, new_status) {
+                Ok(true) => DaemonResponse::OkMessage("Updated status".to_string()),
+                Ok(false) => DaemonResponse::Error("Item not found".to_string()),
+                Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
+            }
+        }
         DaemonRequest::UpdateItem {
             id,
             bucket,
@@ -138,10 +271,11 @@ fn handle_connection(
             due_date,
             clear_due_date,
         } => {
+            last_activity.store(now, Ordering::SeqCst);
             let due_update = if clear_due_date {
                 Some(None)
             } else {
-                due_date.map(Some)
+                due_date
             };
             match db.update_item(id, bucket, content, priority, due_update) {
                 Ok(true) => DaemonResponse::OkMessage("Updated item".to_string()),
@@ -153,6 +287,7 @@ fn handle_connection(
             current_password,
             new_password,
         } => {
+            last_activity.store(now, Ordering::SeqCst);
             let mut current_password = current_password;
             let mut new_password = new_password;
             let response = match Keystore::load(paths.keystore_path()) {
@@ -160,11 +295,13 @@ fn handle_connection(
                     Ok(mut unwrapped) => {
                         if &unwrapped != master_key {
                             unwrapped.zeroize();
+                            password_attempts.fetch_add(1, Ordering::SeqCst);
                             DaemonResponse::Error(
                                 "Current password does not match active vault".to_string(),
                             )
                         } else {
                             unwrapped.zeroize();
+                            password_attempts.store(0, Ordering::SeqCst);
                             match keystore.rewrap_password(&new_password, master_key) {
                                 Ok(()) => match keystore.save(paths.keystore_path()) {
                                     Ok(()) => {
@@ -180,7 +317,10 @@ fn handle_connection(
                             }
                         }
                     }
-                    Err(_) => DaemonResponse::Error("Invalid current password".to_string()),
+                    Err(_) => {
+                        password_attempts.fetch_add(1, Ordering::SeqCst);
+                        DaemonResponse::Error("Invalid current password".to_string())
+                    }
                 },
                 Err(err) => DaemonResponse::Error(format!("Failed to load keystore: {err}")),
             };
@@ -189,6 +329,7 @@ fn handle_connection(
             response
         }
         DaemonRequest::RebuildKeystore { new_password } => {
+            last_activity.store(now, Ordering::SeqCst);
             let mut new_password = new_password;
             let response = match Keystore::create_from_master_key(&new_password, master_key) {
                 Ok((keystore, recovery)) => match keystore.save(paths.keystore_path()) {
@@ -198,17 +339,22 @@ fn handle_connection(
                 Err(err) => DaemonResponse::Error(format!("Failed to rebuild keystore: {err}")),
             };
             new_password.zeroize();
+            password_attempts.store(0, Ordering::SeqCst);
             response
         }
-        DaemonRequest::GetDashboardStats => match db.stats() {
-            Ok((open, done_today, p1)) => DaemonResponse::OkStats {
-                open,
-                done_today,
-                p1,
-            },
-            Err(err) => DaemonResponse::Error(format!("Failed to fetch stats: {err}")),
-        },
+        DaemonRequest::GetDashboardStats => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.stats() {
+                Ok((open, done_today, p1)) => DaemonResponse::OkStats {
+                    open,
+                    done_today,
+                    p1,
+                },
+                Err(err) => DaemonResponse::Error(format!("Failed to fetch stats: {err}")),
+            }
+        }
         DaemonRequest::ImportItems { items } => {
+            last_activity.store(now, Ordering::SeqCst);
             let mut count = 0usize;
             let mut error = None;
             for item in items {
@@ -225,11 +371,15 @@ fn handle_connection(
                 None => DaemonResponse::OkMessage(format!("Imported {count} items")),
             }
         }
-        DaemonRequest::ArchiveAll => match db.archive_all() {
-            Ok(count) => DaemonResponse::OkMessage(format!("Archived {count} item(s)")),
-            Err(err) => DaemonResponse::Error(format!("Failed to archive: {err}")),
-        },
+        DaemonRequest::ArchiveAll => {
+            last_activity.store(now, Ordering::SeqCst);
+            match db.archive_all() {
+                Ok(count) => DaemonResponse::OkMessage(format!("Archived {count} item(s)")),
+                Err(err) => DaemonResponse::Error(format!("Failed to archive: {err}")),
+            }
+        }
         DaemonRequest::Undo { id } => {
+            last_activity.store(now, Ordering::SeqCst);
             if let Some(id) = id {
                 match db.update_status(id, Status::Open) {
                     Ok(true) => DaemonResponse::OkMessage(format!("Restored {id}")),
@@ -245,6 +395,7 @@ fn handle_connection(
             }
         }
         DaemonRequest::Shutdown => {
+            last_activity.store(now, Ordering::SeqCst);
             running.store(false, Ordering::SeqCst);
             DaemonResponse::OkMessage("Daemon shutting down".to_string())
         }

@@ -3,36 +3,47 @@ name = "keeper"
 version = "0.2.1"
 edition = "2024"
 
- [dependencies]
-# CLI & Async
-clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1.32", features = ["full"] }
-# UI & Formatting
-reedline = "0.24"
-tabled = "0.14"
-# Daemon & IPC
-daemonize = "0.5"
-interprocess = "1.2" # Or tokio::net::UnixStream
-# Database (Crucial: bundled-sqlcipher)
-rusqlite = { version = "0.29", features = ["bundled-sqlcipher-vendored-openssl"] }
-# Security
-argon2 = "0.5"
-zeroize = { version = "1.6" }
-chacha20poly1305 = "0.10"
-rand = { version = "0.8", features = ["getrandom"] }
-base64 = "0.22"
-flate2 = "1.0"
-bip39 = { version = "2.0", features = ["rand"] }
-sha2 = "0.10"
-# Time & Serialization
-chrono = { version = "0.4", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-# Utils
-thiserror = "1.0"
-anyhow = "1.0"
-directories = "5.0" # For finding home dir correctly across OS
-secrets = "0.2.0"
+  [dependencies]
+ # CLI & Async
+ clap = { version = "4.4", features = ["derive"] }
+ tokio = { version = "1.32", features = ["full"] }
+ # UI & Formatting
+ reedline = "0.24"
+ tabled = "0.14"
+ # Daemon & IPC
+ daemonize = "0.5"
+ interprocess = "1.2" # Or tokio::net::UnixStream
+ # Database (Crucial: bundled-sqlcipher)
+ rusqlite = { version = "0.29", features = ["bundled-sqlcipher-vendored-openssl"] }
+ # Security
+ argon2 = "0.5"
+ zeroize = { version = "1.6", features = ["derive"] }
+ chacha20poly1305 = "0.10"
+ rand = { version = "0.8", features = ["getrandom"] }
+ base64 = "0.22"
+ flate2 = "1.0"
+ bip39 = { version = "2.0", features = ["rand"] }
+ sha2 = "0.10"
+ subtle = "2.6"
+ # Signature verification (SWAP-005)
+ minisign = "0.7"
+ # Rate limiting
+ governor = "0.6"
+ nonzero_ext = "0.3"
+ # Error sanitization
+ regex = "1.10"
+ once_cell = "1.19"
+ # Time & Serialization
+ chrono = { version = "0.4", features = ["serde"] }
+ serde = { version = "1.0", features = ["derive"] }
+ serde_json = "1.0"
+ # Utils
+ thiserror = "1.0"
+ anyhow = "1.0"
+ directories = "5.0" # For finding home dir correctly across OS
+
+ [target.'cfg(unix)'.dependencies]
+ libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -41,6 +52,7 @@ tempfile = "3.8"
 insta = { version = "1.34", features = ["yaml"] }
 cucumber = "0.21"
 futures = "0.3"
+minisign = "0.7"
 
 [[test]]
 name = "bdd"
