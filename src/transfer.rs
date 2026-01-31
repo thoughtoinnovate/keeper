@@ -75,7 +75,7 @@ pub fn run_import(paths: &KeeperPaths, args: crate::cli::ImportArgs) -> Result<(
     }
 
     if let Some(path) = encrypted_path {
-        let password = prompt_export_password_once()?;
+        let password =         prompt_export_password()?;
         let (vault_db, keystore_json) = export::read_encrypted_export(&path, &password)?;
         export::write_bundle_to_paths(paths, &vault_db, &keystore_json, args.force)?;
         println!(
@@ -89,23 +89,51 @@ pub fn run_import(paths: &KeeperPaths, args: crate::cli::ImportArgs) -> Result<(
 
 fn fetch_items_for_export(paths: &KeeperPaths) -> Result<Vec<models::Item>> {
     if client::daemon_running(paths) {
-        let response = client::send_request(
-            paths,
-            &DaemonRequest::GetItems {
-                bucket_filter: None,
-                priority_filter: None,
-                status_filter: None,
-                date_cutoff: None,
-                include_notes: true,
-                notes_only: false,
-            },
-        )?;
-        return match response {
-            DaemonResponse::OkItems(items) => Ok(items),
-            DaemonResponse::Error(err) => Err(anyhow!(err)),
-            _ => Err(anyhow!("Unexpected response from daemon")),
-        };
+        return Err(anyhow!("Stop the daemon before exporting"));
     }
+    if !paths.db_path.exists() {
+        return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
+    }
+    let password = prompt::prompt_password()?;
+    let keystore = keystore::Keystore::load(paths.keystore_path())?;
+    let mut master_key = keystore.unwrap_with_password(&password)?;
+    password.zeroize();
+    let db_key = security::derive_db_key_hex(&master_key);
+    let db = db::Db::open(&paths.db_path, &db_key)?;
+    master_key.zeroize();
+    let items = db.get_items(None, None, None, None, true, false)?;
+    master_key.zeroize();
+    Ok(items)
+}
+
+fn import_items(paths: &KeeperPaths, items: Vec<models::Item>) -> Result<usize> {
+    if client::daemon_running(paths) {
+        return Err(anyhow!("Stop the daemon before importing"));
+    }
+    if !paths.db_path.exists() {
+        return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
+    }
+    let password = prompt::prompt_password()?;
+    let keystore = keystore::Keystore::load(paths.keystore_path())?;
+    let mut master_key = keystore.unwrap_with_password(&password)?;
+    password.zeroize();
+    let db_key = security::derive_db_key_hex(&master_key);
+    let db = db::Db::open(&paths.db_path, &db_key)?;
+    master_key.zeroize();
+    let mut count = 0;
+    let mut error = None;
+    for item in items {
+        match db.upsert_item(item) {
+            Ok(()) => count += 1,
+            Err(err) => {
+                error = Some(err);
+                break;
+            }
+        }
+    }
+    master_key.zeroize();
+    Ok(count)
+}
 
     if !paths.db_path.exists() {
         return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
@@ -151,7 +179,7 @@ fn import_items(paths: &KeeperPaths, items: Vec<models::Item>) -> Result<usize> 
     Ok(count)
 }
 
-fn prompt_export_password() -> Result<String> {
+fn prompt_export_password() -> Result<SecurePassword> {
     let first = prompt::prompt_export_password()?;
     let second = prompt::prompt_export_password_confirm()?;
     if first != second {

@@ -1,0 +1,83 @@
+[2026-01-31 04:33:31] correlation_id=29bda040-280d-4081-b727-ee0f8abdffa2 error=Plugin does not export 'provider_chat' function
+[2026-01-31 04:33:45] correlation_id=a58e2695-a9dc-4637-a552-28b46938b39d error=Plugin does not export 'provider_chat' function
+[2026-01-31 04:42:34] correlation_id=bc782cff-b30f-4456-b432-99d7ed5ad594 error=Bad request: [{
+  "error": {
+    "code": 400,
+    "message": "Request contains an invalid argument.",
+    "errors": [
+      {
+        "message": "Request contains an invalid argument.",
+        "domain": "global",
+        "reason": "badRequest"
+      }
+    ],
+    "status": "INVALID_ARGUMENT"
+  }
+}
+]
+[2026-01-31 04:58:35] correlation_id=4b4327ae-f2ec-488f-a0fb-992dba69a74f error=Bad request: [{
+  "error": {
+    "code": 400,
+    "message": "Request contains an invalid argument.",
+    "errors": [
+      {
+        "message": "Request contains an invalid argument.",
+        "domain": "global",
+        "reason": "badRequest"
+      }
+    ],
+    "status": "INVALID_ARGUMENT"
+  }
+}
+]
+[2026-01-31 05:41:49] correlation_id=63ff099e-9442-4f37-9983-3043b4d468f5 error=Unauthorized: [{
+  "error": {
+    "code": 401,
+    "message": "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.",
+    "errors": [
+      {
+        "message": "Invalid Credentials",
+        "domain": "global",
+        "reason": "authError",
+        "location": "Authorization",
+        "locationType": "header"
+      }
+    ],
+    "status": "UNAUTHENTICATED"
+  }
+}
+]
+[2026-01-31 05:41:54] correlation_id=b8422d44-bd66-407e-bdd0-224d4a82d866 error=Unauthorized: [{
+  "error": {
+    "code": 401,
+    "message": "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.",
+    "errors": [
+      {
+        "message": "Invalid Credentials",
+        "domain": "global",
+        "reason": "authError",
+        "location": "Authorization",
+        "locationType": "header"
+      }
+    ],
+    "status": "UNAUTHENTICATED"
+  }
+}
+]
+[2026-01-31 05:42:04] correlation_id=a04ec3b6-2251-4696-b738-e353c2cf5a08 error=Plugin does not export 'provider_chat' function
+[2026-01-31 05:42:19] correlation_id=67f29bcb-298d-4072-96c3-709c6d22f231 error=Plugin does not export 'provider_chat' function
+[2026-01-31 05:43:32] correlation_id=a354c21d-9681-4c29-a2ee-6af5b0c3eb35 error=Bad request: [{
+  "error": {
+    "code": 400,
+    "message": "Request contains an invalid argument.",
+    "errors": [
+      {
+        "message": "Request contains an invalid argument.",
+        "domain": "global",
+        "reason": "badRequest"
+      }
+    ],
+    "status": "INVALID_ARGUMENT"
+  }
+}
+]

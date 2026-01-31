@@ -1,0 +1,10 @@
+{
+  "build_mode": "balanced",
+  "agent_mode": "build",
+  "thinking_enabled": false,
+  "thinking_tool_enabled": true,
+  "selected_provider": "gemini-oauth",
+  "selected_model": "gemini-3-pro-preview",
+  "selected_model_name": null,
+  "theme": "GruvboxDark"
+}

@@ -3,7 +3,7 @@ name = "keeper"
 version = "0.2.1"
 edition = "2024"
 
-[dependencies]
+ [dependencies]
 # CLI & Async
 clap = { version = "4.4", features = ["derive"] }
 tokio = { version = "1.32", features = ["full"] }
@@ -17,9 +17,9 @@ interprocess = "1.2" # Or tokio::net::UnixStream
 rusqlite = { version = "0.29", features = ["bundled-sqlcipher-vendored-openssl"] }
 # Security
 argon2 = "0.5"
-zeroize = "1.6"
+zeroize = { version = "1.6" }
 chacha20poly1305 = "0.10"
-rand = "0.8"
+rand = { version = "0.8", features = ["getrandom"] }
 base64 = "0.22"
 flate2 = "1.0"
 bip39 = { version = "2.0", features = ["rand"] }
@@ -32,6 +32,7 @@ serde_json = "1.0"
 thiserror = "1.0"
 anyhow = "1.0"
 directories = "5.0" # For finding home dir correctly across OS
+secrets = "0.2.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"

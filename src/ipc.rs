@@ -1,4 +1,5 @@
 use crate::models::{Item, Priority, Status};
+use crate::security::memory::SecretString;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
@@ -27,15 +28,15 @@ pub enum DaemonRequest {
         bucket: Option<String>,
         content: Option<String>,
         priority: Option<Priority>,
-        due_date: Option<NaiveDate>,
+        due_date: Option<Option<NaiveDate>>,
         clear_due_date: bool,
     },
     RotatePassword {
-        current_password: String,
-        new_password: String,
+        current_password: SecretString,
+        new_password: SecretString,
     },
     RebuildKeystore {
-        new_password: String,
+        new_password: SecretString,
     },
     GetDashboardStats,
     ArchiveAll,
