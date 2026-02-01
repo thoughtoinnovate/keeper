@@ -91,18 +91,21 @@ fn is_running_as_root() -> bool {
 #[cfg(unix)]
 fn has_ipc_lock_capability() -> bool {
     use std::process::Command;
-    
+
     // Check if we can use cap_get_proc via getpcaps
-    if let Ok(output) = Command::new("getpcaps").arg(std::process::id().to_string()).output() {
+    if let Ok(output) = Command::new("getpcaps")
+        .arg(std::process::id().to_string())
+        .output()
+    {
         let stdout = String::from_utf8_lossy(&output.stdout);
         return stdout.contains("cap_ipc_lock");
     }
-    
+
     // Alternative: try to check via /proc/self/status
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         return status.contains("CapEff:") && !status.contains("CapEff:\t0000000000000000");
     }
-    
+
     false
 }
 
@@ -125,7 +128,7 @@ fn check_security_prerequisites() {
             eprintln!("   Then run keeper normally without sudo.");
             eprintln!();
         }
-        
+
         // Check for CAP_IPC_LOCK capability
         if !has_ipc_lock_capability() && !is_running_as_root() {
             eprintln!("⚠️  NOTE: Binary lacks CAP_IPC_LOCK capability.");
@@ -141,7 +144,7 @@ fn check_security_prerequisites() {
 fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()> {
     // Pre-flight security checks
     check_security_prerequisites();
-    
+
     if client::daemon_running(paths) {
         println!(
             "✅ Daemon already running. Vault: {}. Socket: {}",
@@ -171,7 +174,7 @@ fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()
             let _ = stderr.read_to_string(&mut stderr_output);
         }
         let _ = child.wait();
-        
+
         let error_msg = if stderr_output.is_empty() {
             "Daemon failed to start (no error output captured)".to_string()
         } else {

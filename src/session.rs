@@ -4,7 +4,7 @@ use crate::logger;
 use crate::paths::KeeperPaths;
 use crate::{client, prompt, security};
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::Zeroize;
