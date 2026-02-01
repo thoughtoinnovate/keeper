@@ -150,7 +150,27 @@ else
     fi
 fi
 
-# --- 5. Verify & Finish ---
+# --- 5. Setup Security Capabilities (Linux/macOS) ---
+if [ "$IS_WINDOWS" -eq 0 ]; then
+    log_info "Setting up security capabilities (requires sudo)..."
+    
+    # Check if setcap is available (Linux)
+    if command -v setcap >/dev/null 2>&1; then
+        if sudo setcap cap_ipc_lock+ep "$INSTALL_DIR/$BIN_NAME" 2>/dev/null; then
+            log_success "Security capability set (CAP_IPC_LOCK) - memory protection enabled"
+        else
+            log_warn "Could not set security capability. You may need to run:"
+            log_warn "  sudo setcap cap_ipc_lock+ep $INSTALL_DIR/$BIN_NAME"
+            log_warn "Without this, keeper may require elevated privileges to start."
+        fi
+    else
+        log_warn "setcap not available. On Linux, install libcap2-bin package:"
+        log_warn "  sudo apt-get install libcap2-bin  # Debian/Ubuntu"
+        log_warn "  sudo yum install libcap            # RHEL/CentOS"
+    fi
+fi
+
+# --- 6. Verify & Finish ---
 BIN_CMD="$BIN_NAME$BIN_EXT"
 if ! command -v "$BIN_CMD" >/dev/null 2>&1; then
     log_warn "'$BIN_CMD' is not in your PATH."
@@ -160,6 +180,9 @@ fi
 
 INSTALLED_VERSION=$("$BIN_CMD" --version)
 log_success "Successfully installed: $INSTALLED_VERSION"
+echo ""
+echo "Security Note: Keeper uses CAP_IPC_LOCK to protect memory without requiring sudo."
+echo "If you see permission errors, run: sudo setcap cap_ipc_lock+ep \$(which keeper)"
 echo ""
 echo "Try it out by running:"
 echo "  keeper start"

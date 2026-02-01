@@ -57,6 +57,43 @@ On Unix, Keeper automatically hardens permissions:
 - `vault.db`: `0600`
 - `keystore.json`: `0600`
 
+### Privilege Model (Why Not Use sudo?)
+
+**Never run `keeper start` with sudo.** Here's why:
+
+1. **File Ownership Issues**
+   - Files created by root-owned daemon are owned by root
+   - You'll need sudo to access your own vault
+   - Creates unnecessary dependency on elevated privileges
+
+2. **Security Principle of Least Privilege**
+   - Running as root exposes the daemon to greater attack surface
+   - If compromised, attacker has full system access
+   - Violates security best practices
+
+3. **Better Alternative: Linux Capabilities**
+   - Grant only the specific capability needed (`CAP_IPC_LOCK`)
+   - Daemon runs as your user, not root
+   - Memory is still protected from swapping
+   - Files remain owned by you
+
+**Setup (one-time):**
+```bash
+# Grant capability
+sudo setcap cap_ipc_lock+ep /usr/local/bin/keeper
+
+# Verify
+echo "Keeper can now run without sudo"
+keeper start  # Works as normal user!
+```
+
+**If you accidentally ran with sudo:**
+```bash
+# Fix ownership
+sudo chown -R $USER:$USER ~/.keeper
+# Then use capabilities method above
+```
+
 ## Recovery Code (Backup Code)
 You receive a 24‑word recovery code **once**, when a vault is created:
 ```

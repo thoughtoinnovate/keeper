@@ -14,7 +14,23 @@ Keeper is an encrypted CLI "second brain" that runs a local daemon so you can ca
 curl -fsSL https://github.com/thoughtoinnovate/keeper/raw/main/install.sh | sh
 ```
 
-The installer downloads the latest release and verifies a SHA-256 checksum before installing.
+The installer downloads the latest release, verifies a SHA-256 checksum, and **automatically sets up security capabilities** (on Linux).
+
+### 🔐 Security Setup (Linux/macOS)
+
+Keeper uses memory locking to prevent your encryption keys from being swapped to disk. This requires the `CAP_IPC_LOCK` capability on Linux.
+
+**The install script handles this automatically**, but if you see permission errors:
+
+```bash
+# Grant capability (one-time setup)
+sudo setcap cap_ipc_lock+ep /usr/local/bin/keeper
+
+# Verify it's set
+getpcaps $(pgrep -f "keeper daemon")
+```
+
+**⚠️ Important:** Never run `keeper start` with `sudo`. It creates root-owned files you can't access without sudo. Use capabilities instead.
 
 ## Quick start
 ```bash
