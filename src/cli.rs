@@ -25,6 +25,8 @@ pub struct Cli {
     pub show_recovery: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
+    #[arg(long, global = true, help = "Check if a newer version is available")]
+    pub check_update: bool,
 }
 
 #[derive(Subcommand)]

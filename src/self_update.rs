@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 use rand::rngs::OsRng;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,10 +10,147 @@ use std::process::Command;
 
 const REPO_URL: &str = "https://github.com/thoughtoinnovate/keeper";
 const BIN_NAME: &str = "keeper";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/thoughtoinnovate/keeper/releases/latest";
 
 // Ed25519 public key for release signature verification (SWAP-005)
 // This is the minisign public key for verifying keeper releases
 const RELEASE_PUBKEY: &str = "RWQfM2V3GXz+nRZv7D+K/s+xe3NGW5h8r2uJ0Q5x2G4=";
+
+/// Result of checking for updates
+#[derive(Debug, Clone)]
+pub struct UpdateCheckResult {
+    pub update_available: bool,
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub error: Option<String>,
+}
+
+/// GitHub release API response structure
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+}
+
+impl UpdateCheckResult {
+    /// Create a result indicating no update available (up to date)
+    pub fn up_to_date(version: &str) -> Self {
+        Self {
+            update_available: false,
+            current_version: version.to_string(),
+            latest_version: None,
+            error: None,
+        }
+    }
+
+    /// Create a result indicating an update is available
+    pub fn update_available(current: &str, latest: &str) -> Self {
+        Self {
+            update_available: true,
+            current_version: current.to_string(),
+            latest_version: Some(latest.to_string()),
+            error: None,
+        }
+    }
+
+    /// Create a result with an error (e.g., network failure)
+    pub fn error(current: &str, err: &str) -> Self {
+        Self {
+            update_available: false,
+            current_version: current.to_string(),
+            latest_version: None,
+            error: Some(err.to_string()),
+        }
+    }
+}
+
+/// Check if an update is available from GitHub releases.
+/// This function is non-blocking and handles network errors gracefully.
+pub fn check_for_updates() -> UpdateCheckResult {
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    // Fetch latest release info from GitHub API
+    let release = match fetch_latest_release() {
+        Ok(release) => release,
+        Err(e) => {
+            return UpdateCheckResult::error(
+                current_version,
+                &format!("Failed to fetch update info: {e}"),
+            );
+        }
+    };
+
+    // Extract version from tag_name (remove leading 'v' if present)
+    let latest_version = release.tag_name.trim_start_matches('v');
+
+    // Compare versions
+    match compare_versions(current_version, latest_version) {
+        Ok(Ordering::Less) => UpdateCheckResult::update_available(current_version, latest_version),
+        Ok(_) => UpdateCheckResult::up_to_date(current_version),
+        Err(e) => {
+            UpdateCheckResult::error(current_version, &format!("Version comparison failed: {e}"))
+        }
+    }
+}
+
+use std::cmp::Ordering;
+
+/// Fetch the latest release info from GitHub API using curl
+fn fetch_latest_release() -> Result<GitHubRelease> {
+    // Use curl to fetch the GitHub API
+    // We use curl instead of reqwest to avoid adding heavy dependencies
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-H",
+            "Accept: application/vnd.github.v3+json",
+            "-H",
+            "User-Agent: keeper-update-check",
+            GITHUB_API_URL,
+        ])
+        .output()
+        .context("Failed to execute curl command")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!("GitHub API request failed: {stderr}"));
+    }
+
+    let json_str =
+        String::from_utf8(output.stdout).context("Invalid UTF-8 response from GitHub API")?;
+
+    let release: GitHubRelease =
+        serde_json::from_str(&json_str).context("Failed to parse GitHub API response")?;
+
+    Ok(release)
+}
+
+/// Compare two semantic version strings (e.g., "0.3.7" vs "0.3.8")
+fn compare_versions(current: &str, latest: &str) -> Result<Ordering> {
+    let current_parts: Vec<u32> = current
+        .split('.')
+        .map(|s| s.parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse current version")?;
+
+    let latest_parts: Vec<u32> = latest
+        .split('.')
+        .map(|s| s.parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .context("Failed to parse latest version")?;
+
+    // Compare each part (major, minor, patch)
+    for i in 0..std::cmp::max(current_parts.len(), latest_parts.len()) {
+        let current_part = current_parts.get(i).copied().unwrap_or(0);
+        let latest_part = latest_parts.get(i).copied().unwrap_or(0);
+
+        match current_part.cmp(&latest_part) {
+            Ordering::Equal => continue,
+            ordering => return Ok(ordering),
+        }
+    }
+
+    Ok(Ordering::Equal)
+}
 
 use minisign::{PublicKeyBox, verify};
 

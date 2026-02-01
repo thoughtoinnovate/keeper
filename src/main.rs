@@ -46,6 +46,14 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     logger::set_debug(cli.debug);
+
+    // Handle --check-update flag globally
+    if cli.check_update {
+        let result = self_update::check_for_updates();
+        print_update_check_result(&result);
+        return Ok(());
+    }
+
     let paths = KeeperPaths::new(cli.vault.as_deref())?;
 
     match cli.command {
@@ -230,7 +238,44 @@ fn cmd_status(paths: &KeeperPaths) -> Result<()> {
     } else {
         println!("❌ Daemon not running.");
     }
+
+    // Check for updates (non-blocking, silent on errors)
+    let update_result = self_update::check_for_updates();
+    print_update_status(&update_result);
+
     Ok(())
+}
+
+/// Print update check result for --check-update flag
+fn print_update_check_result(result: &self_update::UpdateCheckResult) {
+    match &result.error {
+        Some(err) => {
+            eprintln!("⚠️  Could not check for updates: {}", err);
+        }
+        None => {
+            if result.update_available {
+                println!("📦 Update available!");
+                println!("   Current: {}", result.current_version);
+                println!("   Latest:  {}", result.latest_version.as_ref().unwrap());
+                println!("   Run `keeper update --self` to update.");
+            } else {
+                println!("✅ Up to date (version {})", result.current_version);
+            }
+        }
+    }
+}
+
+/// Print update status (for status command, less verbose)
+fn print_update_status(result: &self_update::UpdateCheckResult) {
+    // Only show update info if an update is available (don't spam with "up to date")
+    if let (true, Some(latest)) = (result.update_available, &result.latest_version) {
+        println!(
+            "📦 Update available: v{} (you have v{})",
+            latest, result.current_version
+        );
+        println!("   Run `keeper update --self` to update.");
+    }
+    // Silently ignore errors - network issues shouldn't clutter status output
 }
 
 fn cmd_note(paths: &KeeperPaths, args: cli::NoteArgs) -> Result<()> {
