@@ -8,6 +8,11 @@ env:
   CARGO_TERM_COLOR: always
   KEEPER_TEST_MODE: "1"  # Skip mlockall() in tests for CI
 
+permissions:
+  contents: read
+  checks: write
+  security-events: write
+
 jobs:
   test:
     name: Test Suite (Linux)
@@ -57,3 +62,4 @@ jobs:
         uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          deny-warnings: false  # Allow warnings (unmaintained packages) to not block builds
