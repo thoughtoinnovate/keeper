@@ -30,9 +30,6 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use zeroize::Zeroize;
 
-#[cfg(unix)]
-use libc;
-
 use crate::cli::{Cli, Commands};
 use crate::ipc::{DaemonRequest, DaemonResponse};
 use crate::migration::{MigrationManager, MigrationStatus};
