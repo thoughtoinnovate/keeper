@@ -30,7 +30,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       
       - name: Run Unit Tests
-        run: cargo test --lib
+        run: cargo test
         env:
           KEEPER_TEST_MODE: "1"
       
