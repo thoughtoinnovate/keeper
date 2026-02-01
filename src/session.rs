@@ -4,7 +4,7 @@ use crate::logger;
 use crate::paths::KeeperPaths;
 use crate::{client, prompt, security};
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::Zeroize;
@@ -61,7 +61,7 @@ pub fn start_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Resu
         .arg("daemon")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .context("Failed to spawn daemon")?;
 
@@ -77,6 +77,45 @@ pub fn start_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Resu
     logger::debug("Daemon process spawned");
 
     Ok(child.id())
+}
+
+pub fn start_daemon_with_child(
+    paths: &KeeperPaths,
+    master_key: &[u8],
+    debug: bool,
+) -> Result<std::process::Child> {
+    // Avoid format!() by directly encoding and appending newline (SWAP-013)
+    let mut payload_buf = STANDARD_NO_PAD.encode(master_key);
+    payload_buf.push('\n');
+
+    let exe = std::env::current_exe().context("Unable to locate keeper binary")?;
+    let mut cmd = Command::new(exe);
+    if debug {
+        cmd.arg("--debug");
+    }
+    if let Some(vault) = &paths.vault_arg {
+        cmd.arg("--vault").arg(vault);
+    }
+    let mut child = cmd
+        .arg("daemon")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to spawn daemon")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(payload_buf.as_bytes())
+            .context("Failed to send key to daemon")?;
+    }
+
+    // Zeroize the payload buffer after sending
+    payload_buf.zeroize();
+
+    logger::debug("Daemon process spawned");
+
+    Ok(child)
 }
 
 pub fn ensure_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Result<Option<u32>> {

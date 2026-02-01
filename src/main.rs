@@ -91,18 +91,31 @@ fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()
             display_recovery_secure(recovery)?;
         }
     }
-    let pid = session::start_daemon(paths, &outcome.master_key, debug)?;
+    let mut child = session::start_daemon_with_child(paths, &outcome.master_key, debug)?;
     let mut master_key = outcome.master_key;
     master_key.zeroize();
 
-    if !client::wait_for_daemon(paths, 1500) {
-        return Err(anyhow!("Daemon failed to start"));
+    if !client::wait_for_daemon(paths, 3000) {
+        // Daemon failed to start, try to capture error
+        let mut stderr_output = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            use std::io::Read;
+            let _ = stderr.read_to_string(&mut stderr_output);
+        }
+        let _ = child.wait();
+        
+        let error_msg = if stderr_output.is_empty() {
+            "Daemon failed to start (no error output captured)".to_string()
+        } else {
+            format!("Daemon failed to start:\n{}", stderr_output)
+        };
+        return Err(anyhow!(error_msg));
     }
 
     println!(
         "✅ Daemon started. Vault: {}. PID: {}. Socket: {}",
         paths.db_path.display(),
-        pid,
+        child.id(),
         paths.socket_path_display()
     );
 
@@ -112,11 +125,11 @@ fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()
 fn display_recovery_secure(recovery: &str) -> Result<()> {
     use std::io::{self, IsTerminal, Write};
 
-    print!("🧩 Recovery Code: [{} characters]", recovery.len());
-    io::stdout().flush()?;
+    println!("🧩 Recovery Code:");
+    println!("{}\n", recovery);
 
     if io::stdin().is_terminal() {
-        print!("\nPress Enter when you've saved the code securely...");
+        print!("Press Enter when you've saved the code securely...");
         io::stdout().flush()?;
 
         let mut input = String::new();
@@ -127,8 +140,6 @@ fn display_recovery_secure(recovery: &str) -> Result<()> {
             print!("\x1b[2J\x1b[H");
             io::stdout().flush()?;
         }
-    } else {
-        println!();
     }
 
     Ok(())
