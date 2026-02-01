@@ -85,12 +85,17 @@ fn main() -> Result<()> {
         };
 
         let id = req.id.clone().unwrap_or(json!(null));
-        let response = handle_request(&config, req);
+        let response = handle_request(&config, &req);
+        let id = req.id.clone().unwrap_or(json!(null));
+        let (result, error) = match response {
+            Ok(val) => (Some(val), None),
+            Err(err) => (None, Some(err)),
+        };
         let resp = RpcResponse {
             jsonrpc: "2.0",
             id,
-            result: response.ok(),
-            error: response.err(),
+            result,
+            error,
         };
         let payload = serde_json::to_string(&resp)?;
         writeln!(stdout, "{payload}")?;
@@ -153,6 +158,7 @@ fn handle_request(config: &Config, req: RpcRequest) -> Result<Value, RpcError<'s
                 })?;
             let args = req
                 .params
+                .as_ref()
                 .and_then(|p| p.get("arguments").cloned())
                 .unwrap_or(json!({}));
             let result = call_tool(config, tool, args)?;

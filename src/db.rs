@@ -2,7 +2,7 @@ use crate::models::{Item, Priority, Status};
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::types::Value;
-use rusqlite::{params_from_iter, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use std::fs;
 use std::path::Path;
 

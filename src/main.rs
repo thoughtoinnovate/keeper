@@ -9,6 +9,7 @@ mod formatting;
 mod ipc;
 mod keystore;
 mod logger;
+mod migration;
 mod models;
 mod paths;
 mod prompt;
@@ -26,11 +27,14 @@ use base64::Engine as _;
 use clap::Parser;
 use std::io;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use zeroize::Zeroize;
 
 use crate::cli::{Cli, Commands};
 use crate::ipc::{DaemonRequest, DaemonResponse};
+use crate::migration::{MigrationManager, MigrationStatus};
 use crate::paths::KeeperPaths;
+use crate::security::memory::SecurePassword;
 
 fn main() {
     if let Err(err) = run() {
@@ -64,6 +68,7 @@ fn run() -> Result<()> {
         Some(Commands::Undo(args)) => cmd_undo(&paths, args),
         Some(Commands::Archive) => cmd_archive(&paths),
         Some(Commands::Daemon) => cmd_daemon(&paths),
+        Some(Commands::Migrate(args)) => cmd_migrate(&paths, args),
         None => tui::run_repl(&paths, cli.debug),
     }
 }
@@ -228,6 +233,35 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
                 "Self-update does not take item content. Run `keeper update <id> <content...>` to update an item."
             ));
         }
+
+        // Check migration before self-update
+        if !args.skip_migration_check {
+            let manager = MigrationManager::new(paths.clone())?;
+            let current_version = env!("CARGO_PKG_VERSION");
+            let target_version = args.tag.as_deref().unwrap_or("latest");
+
+            match manager.check_migration_needed(current_version, target_version)? {
+                MigrationStatus::NoActionRequired => {
+                    // Safe to proceed
+                }
+                MigrationStatus::MigrationRequired(_) => {
+                    if !args.force {
+                        eprintln!("⚠️  Migration check: Update requires migration.");
+                        eprintln!("   Run `keeper migrate check` for details.");
+                        eprintln!("   Create backup: `keeper migrate backup`");
+                        eprintln!("   Or use --force to skip this check (not recommended)");
+                        return Err(anyhow!("Migration required"));
+                    }
+                }
+                MigrationStatus::Incompatible(reason) => {
+                    return Err(anyhow!(
+                        "Cannot update: {}. Run `keeper migrate check` for details.",
+                        reason
+                    ));
+                }
+            }
+        }
+
         return self_update::run_self_update(self_update::SelfUpdateOptions { tag: args.tag });
     }
 
@@ -259,7 +293,7 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
         bucket: spec.bucket,
         content: spec.content,
         priority: spec.priority,
-        due_date: spec.due_date.map(|opt| opt),
+        due_date: spec.due_date,
         clear_due_date: matches!(spec.due_date, Some(None)),
     };
     let response = client::send_request(paths, &request)?;
@@ -644,4 +678,192 @@ fn confirm(prompt: &str) -> Result<bool> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     Ok(input.trim() == "YES")
+}
+
+fn cmd_migrate(paths: &KeeperPaths, args: cli::MigrateArgs) -> Result<()> {
+    match args.command {
+        cli::MigrateCommands::Check => cmd_migrate_check(paths),
+        cli::MigrateCommands::Backup { path } => cmd_migrate_backup(paths, path),
+        cli::MigrateCommands::Restore { path } => cmd_migrate_restore(paths, path),
+        cli::MigrateCommands::List => cmd_migrate_list(paths),
+        cli::MigrateCommands::Cleanup => cmd_migrate_cleanup(paths),
+    }
+}
+
+fn cmd_migrate_check(paths: &KeeperPaths) -> Result<()> {
+    let manager = MigrationManager::new(paths.clone())?;
+    let current_version = env!("CARGO_PKG_VERSION");
+    let target_version = "latest"; // In production, this would be fetched
+
+    println!("Checking migration status...");
+    println!("  Current version: {}", current_version);
+    println!("  Target version: {}", target_version);
+
+    match manager.check_migration_needed(current_version, target_version)? {
+        MigrationStatus::NoActionRequired => {
+            println!("✅ No migration needed - safe to update");
+            Ok(())
+        }
+        MigrationStatus::MigrationRequired(req) => {
+            println!("⚠️  Migration required for update");
+            println!("  Type: {:?}", req.migration_type);
+            let changes = manager.get_breaking_changes(current_version, target_version)?;
+            if !changes.is_empty() {
+                println!("\nBreaking changes:");
+                for change in changes {
+                    println!("  - {}: {}", change.version, change.description);
+                    println!("    Migration required: {}", change.requires_migration);
+                    println!("    Type: {:?}", change.migration_type);
+                }
+            }
+            Ok(())
+        }
+        MigrationStatus::Incompatible(reason) => {
+            println!("❌ Cannot migrate: {}", reason);
+            Err(anyhow!("Migration incompatible"))
+        }
+    }
+}
+
+fn cmd_migrate_backup(paths: &KeeperPaths, output: PathBuf) -> Result<()> {
+    if client::daemon_running(paths) {
+        return Err(anyhow!(
+            "Daemon is running. Please stop it first with `keeper stop`"
+        ));
+    }
+
+    if !paths.db_path.exists() {
+        return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
+    }
+
+    let manager = MigrationManager::new(paths.clone())?;
+    let current_version = env!("CARGO_PKG_VERSION");
+    let target_version = "latest";
+
+    println!("Creating pre-update backup...");
+
+    let mut password = prompt::prompt_password()?;
+    let secure_pass = SecurePassword::new(password.as_bytes().to_vec());
+
+    let backup = manager.create_pre_update_backup(current_version, target_version, &secure_pass)?;
+
+    password.zeroize();
+
+    // Move backup to requested output path if different
+    if output != backup.backup_dir {
+        println!("Moving backup to: {}", output.display());
+        std::fs::rename(&backup.backup_dir, &output)?;
+        println!("✅ Backup complete");
+        println!("  Location: {}", output.display());
+    } else {
+        println!("✅ Backup complete");
+        println!("  Location: {}", backup.backup_dir.display());
+    }
+    println!("  Checksum: {}...", &backup.checksum[..16]);
+
+    Ok(())
+}
+
+fn cmd_migrate_restore(paths: &KeeperPaths, backup_path: PathBuf) -> Result<()> {
+    if client::daemon_running(paths) {
+        return Err(anyhow!(
+            "Daemon is running. Please stop it first with `keeper stop`"
+        ));
+    }
+
+    if !backup_path.exists() {
+        return Err(anyhow!(
+            "Backup not found at {}"
+            , backup_path.display()
+        ));
+    }
+
+    println!("⚠️  This will restore your vault from backup.");
+    println!("   Current vault data will be replaced.");
+    println!("   Backup: {}", backup_path.display());
+
+    if !confirm("Type YES to restore: ")? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let manager = MigrationManager::new(paths.clone())?;
+
+    let mut password = prompt::prompt_password()?;
+    let secure_pass = SecurePassword::new(password.as_bytes().to_vec());
+
+    // Find backup in the path
+    let backups = manager.list_backups()?;
+    let backup = backups
+        .into_iter()
+        .find(|b| b.backup_dir == backup_path)
+        .ok_or_else(|| anyhow!("Backup not found in migration system"))?;
+
+    manager.manual_restore(&backup, &secure_pass)?;
+
+    password.zeroize();
+
+    println!("✅ Restore complete");
+    println!("   Your vault has been restored from backup.");
+
+    Ok(())
+}
+
+fn cmd_migrate_list(paths: &KeeperPaths) -> Result<()> {
+    let manager = MigrationManager::new(paths.clone())?;
+    let backups = manager.list_backups()?;
+
+    if backups.is_empty() {
+        println!("No backups found.");
+        return Ok(());
+    }
+
+    println!("Available backups:");
+    for (i, backup) in backups.iter().enumerate() {
+        let verified = manager.verify_backup(backup)?;
+        let status = if verified { "✅" } else { "❌" };
+        println!(
+            "  {}. {} -> {} ({}) {}"
+            , i + 1
+            , backup.original_version
+            , backup.target_version
+            , backup.created_at.split('T').next().unwrap_or("unknown")
+            , status
+        );
+        println!("     Path: {}", backup.backup_dir.display());
+        println!("     Checksum: {}...", &backup.checksum[..16]);
+    }
+
+    Ok(())
+}
+
+fn cmd_migrate_cleanup(paths: &KeeperPaths) -> Result<()> {
+    let manager = MigrationManager::new(paths.clone())?;
+
+    let backups = manager.list_backups()?;
+    if backups.len() <= 5 {
+        println!("No cleanup needed ({} backup(s) found, keep 5)", backups.len());
+        return Ok(());
+    }
+
+    println!("Found {} backup(s), keeping 5 most recent", backups.len());
+    println!("The following backups will be removed:");
+
+    for backup in backups.iter().skip(5) {
+        println!("  - {} ({} -> {})",
+            backup.backup_dir.display(),
+            backup.original_version,
+            backup.target_version
+        );
+    }
+
+    if !confirm("Type YES to clean up old backups: ")? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    manager.cleanup_old_backups(5)?;
+    println!("✅ Cleanup complete");
+
+    Ok(())
 }

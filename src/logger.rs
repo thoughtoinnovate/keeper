@@ -23,8 +23,6 @@ pub fn error(message: &str) {
     }
 }
 
-pub fn error_raw(message: &str) {
-    if is_debug() {
-        eprintln!("[ERROR] {message}");
-    }
+pub fn warn(message: &str) {
+    eprintln!("[WARN] {}", sanitize_for_display(message));
 }

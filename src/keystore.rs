@@ -75,12 +75,23 @@ impl Keystore {
         let mut wrapped_master_recovery =
             wrap_master_key(&recovery, &salt_recovery, &nonce_recovery, &master_key)?;
 
+        // Zeroize sensitive buffers before encoding (SWAP-007)
+        let salt_password_encoded = STANDARD_NO_PAD.encode(salt_password);
+        let salt_recovery_encoded = STANDARD_NO_PAD.encode(salt_recovery);
+        let nonce_password_encoded = STANDARD_NO_PAD.encode(nonce_password);
+        let nonce_recovery_encoded = STANDARD_NO_PAD.encode(nonce_recovery);
+
+        salt_password.zeroize();
+        salt_recovery.zeroize();
+        nonce_password.zeroize();
+        nonce_recovery.zeroize();
+
         let store = Keystore {
             version: VERSION,
-            salt_password: STANDARD_NO_PAD.encode(salt_password),
-            salt_recovery: STANDARD_NO_PAD.encode(salt_recovery),
-            nonce_password: STANDARD_NO_PAD.encode(nonce_password),
-            nonce_recovery: STANDARD_NO_PAD.encode(nonce_recovery),
+            salt_password: salt_password_encoded,
+            salt_recovery: salt_recovery_encoded,
+            nonce_password: nonce_password_encoded,
+            nonce_recovery: nonce_recovery_encoded,
             wrapped_master_password: STANDARD_NO_PAD.encode(&wrapped_master_password),
             wrapped_master_recovery: STANDARD_NO_PAD.encode(&wrapped_master_recovery),
         };
@@ -164,8 +175,15 @@ impl Keystore {
         let mut wrapped =
             wrap_master_key(password_str, &salt_password, &nonce_password, master_key)?;
 
-        self.salt_password = STANDARD_NO_PAD.encode(salt_password);
-        self.nonce_password = STANDARD_NO_PAD.encode(nonce_password);
+        // Zeroize sensitive buffers before encoding (SWAP-007)
+        let salt_password_encoded = STANDARD_NO_PAD.encode(salt_password);
+        let nonce_password_encoded = STANDARD_NO_PAD.encode(nonce_password);
+
+        salt_password.zeroize();
+        nonce_password.zeroize();
+
+        self.salt_password = salt_password_encoded;
+        self.nonce_password = nonce_password_encoded;
         self.wrapped_master_password = STANDARD_NO_PAD.encode(&wrapped);
 
         wrapped.zeroize();

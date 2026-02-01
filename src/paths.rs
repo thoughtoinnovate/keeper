@@ -1,7 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct KeeperPaths {
     pub base_dir: PathBuf,
     pub db_path: PathBuf,

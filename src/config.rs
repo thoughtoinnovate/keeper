@@ -1,5 +1,5 @@
 use crate::paths::KeeperPaths;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -61,9 +61,21 @@ fn validate_workspace(workspace: &str) -> Result<()> {
     if workspace.len() > 50 {
         return Err(anyhow!("Workspace name too long (maximum 50 characters)"));
     }
+
+    // Check for null bytes (VALID-001)
+    if workspace.contains('\0') {
+        return Err(anyhow!("Workspace cannot contain null bytes"));
+    }
+
+    // Check for path traversal sequences (VALID-002)
+    if workspace.contains("..") || workspace.contains("../") || workspace.contains("..\\") {
+        return Err(anyhow!("Workspace cannot contain path traversal sequences"));
+    }
+
+    // Valid characters: alphanumeric, @, /, -, _ (VALID-001/002)
     if !workspace
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '@' || c == '_' || c == '-')
+        .all(|c| c.is_alphanumeric() || c == '@' || c == '/' || c == '_' || c == '-')
     {
         return Err(anyhow!("Workspace contains invalid characters"));
     }

@@ -1,7 +1,7 @@
 use crate::ipc::{DaemonRequest, DaemonResponse};
 use crate::logger;
 use crate::paths::KeeperPaths;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::thread;

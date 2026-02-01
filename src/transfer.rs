@@ -1,9 +1,9 @@
 use crate::export;
-use crate::ipc::{DaemonRequest, DaemonResponse};
+
 use crate::keystore;
 use crate::paths::KeeperPaths;
 use crate::security::memory::{constant_time_compare, SecurePassword};
-use crate::{client, db, models, prompt, security, session};
+use crate::{client, db, models, prompt, security};
 use anyhow::{anyhow, Result};
 use zeroize::Zeroize;
 
@@ -114,6 +114,34 @@ fn import_items(paths: &KeeperPaths, items: Vec<models::Item>) -> Result<usize> 
     if !paths.db_path.exists() {
         return Err(anyhow!("Vault not found at {}", paths.db_path.display()));
     }
+
+    for (index, item) in items.iter().enumerate() {
+        if item.id <= 0 {
+            return Err(anyhow!(
+                "Invalid import data at item {}: id must be positive",
+                index
+            ));
+        }
+        if item.bucket.len() > 1000 {
+            return Err(anyhow!(
+                "Invalid import data at item {}: bucket exceeds 1000 characters",
+                index
+            ));
+        }
+        if !item.bucket.starts_with('@') {
+            return Err(anyhow!(
+                "Invalid import data at item {}: bucket must start with '@'",
+                index
+            ));
+        }
+        if item.content.len() > 10000 {
+            return Err(anyhow!(
+                "Invalid import data at item {}: content exceeds 10000 characters",
+                index
+            ));
+        }
+    }
+
     let mut password = prompt::prompt_password()?;
     let keystore = keystore::Keystore::load(paths.keystore_path())?;
     let mut master_key = keystore.unwrap_with_password(&password)?;
@@ -122,13 +150,11 @@ fn import_items(paths: &KeeperPaths, items: Vec<models::Item>) -> Result<usize> 
     let db = db::Db::open(&paths.db_path, &db_key)?;
     master_key.zeroize();
     let mut count = 0;
-    let mut error = None;
     for item in items {
         match db.upsert_item(&item) {
             Ok(()) => count += 1,
             Err(err) => {
-                error = Some(err);
-                break;
+                return Err(anyhow!("Failed to import item {}: {}", item.id, err));
             }
         }
     }
@@ -145,6 +171,7 @@ fn prompt_export_password() -> Result<SecurePassword> {
     Ok(first)
 }
 
+#[allow(dead_code)]
 fn prompt_export_password_once() -> Result<SecurePassword> {
     prompt::prompt_export_password()
 }

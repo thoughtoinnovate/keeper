@@ -1,4 +1,7 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::RngCore;
+use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +14,7 @@ const BIN_NAME: &str = "keeper";
 // This is the minisign public key for verifying keeper releases
 const RELEASE_PUBKEY: &str = "RWQfM2V3GXz+nRZv7D+K/s+xe3NGW5h8r2uJ0Q5x2G4=";
 
-use minisign::{verify, PublicKeyBox};
+use minisign::{PublicKeyBox, verify};
 
 pub struct SelfUpdateOptions {
     pub tag: Option<String>,
@@ -26,7 +29,10 @@ pub fn run_self_update(opts: SelfUpdateOptions) -> Result<()> {
     let target = detect_target()?;
     let asset_name = format!("{}-{}.{}", BIN_NAME, target.full_target, target.asset_ext);
 
-    let normalized_tag = opts.tag.as_deref().map(normalize_tag);
+    let normalized_tag: Option<String> = match opts.tag.as_deref() {
+        Some(tag) => Some(normalize_tag(tag)?),
+        None => None,
+    };
     let download_url = match normalized_tag.as_deref() {
         Some(tag) => format!("{REPO_URL}/releases/download/{tag}/{asset_name}"),
         None => format!("{REPO_URL}/releases/latest/download/{asset_name}"),
@@ -137,11 +143,22 @@ fn detect_target() -> Result<TargetInfo> {
     })
 }
 
-fn normalize_tag(tag: &str) -> String {
+fn normalize_tag(tag: &str) -> Result<String> {
+    // Validate tag only contains alphanumeric characters, dots, hyphens, and underscores
+    // Pattern: ^[a-zA-Z0-9._-]+$ (UPDATE-002)
+    if !tag
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
+        return Err(anyhow!(
+            "Invalid tag: tag can only contain alphanumeric characters, dots, hyphens, and underscores"
+        ));
+    }
+
     if tag.starts_with('v') {
-        tag.to_string()
+        Ok(tag.to_string())
     } else {
-        format!("v{tag}")
+        Ok(format!("v{tag}"))
     }
 }
 
@@ -371,7 +388,11 @@ struct TempDir {
 
 impl TempDir {
     fn new() -> Result<Self> {
-        let suffix: u64 = rand::random();
+        // Use OsRng for cryptographically secure random temp directory names (UPDATE-001)
+        let mut rng = OsRng;
+        let mut random_bytes = [0u8; 8];
+        rng.fill_bytes(&mut random_bytes);
+        let suffix = URL_SAFE_NO_PAD.encode(random_bytes);
         let mut path = std::env::temp_dir();
         path.push(format!("keeper-update-{suffix}"));
         fs::create_dir_all(&path).context("Failed to create temp dir")?;

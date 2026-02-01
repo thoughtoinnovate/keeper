@@ -389,7 +389,7 @@ fn handle_repl_command(
                 bucket: spec.bucket,
                 content: spec.content,
                 priority: spec.priority,
-                due_date: spec.due_date.map(|opt| opt),
+                due_date: spec.due_date,
                 clear_due_date: matches!(spec.due_date, Some(None)),
             };
             let response = send_request(paths, &request)?;

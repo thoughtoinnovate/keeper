@@ -4,7 +4,7 @@ use crate::logger;
 use crate::paths::KeeperPaths;
 use crate::{client, prompt, security};
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::Zeroize;
@@ -45,7 +45,10 @@ pub fn unlock_or_init_master_key(paths: &KeeperPaths) -> Result<UnlockOutcome> {
 }
 
 pub fn start_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Result<u32> {
-    let payload = STANDARD_NO_PAD.encode(master_key);
+    // Avoid format!() by directly encoding and appending newline (SWAP-013)
+    let mut payload_buf = STANDARD_NO_PAD.encode(master_key);
+    payload_buf.push('\n');
+
     let exe = std::env::current_exe().context("Unable to locate keeper binary")?;
     let mut cmd = Command::new(exe);
     if debug {
@@ -64,9 +67,12 @@ pub fn start_daemon(paths: &KeeperPaths, master_key: &[u8], debug: bool) -> Resu
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin
-            .write_all(format!("{payload}\n").as_bytes())
+            .write_all(payload_buf.as_bytes())
             .context("Failed to send key to daemon")?;
     }
+
+    // Zeroize the payload buffer after sending
+    payload_buf.zeroize();
 
     logger::debug("Daemon process spawned");
 

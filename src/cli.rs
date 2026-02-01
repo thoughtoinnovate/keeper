@@ -50,6 +50,7 @@ pub enum Commands {
     Import(ImportArgs),
     Workspace(WorkspaceArgs),
     Bucket(BucketArgs),
+    Migrate(MigrateArgs),
     #[command(hide = true)]
     Daemon,
 }
@@ -103,6 +104,10 @@ pub struct UpdateArgs {
     pub tag: Option<String>,
     #[arg(long = "self", help = "Update the keeper binary itself")]
     pub self_update: bool,
+    #[arg(long, help = "Skip migration check (for automation)")]
+    pub skip_migration_check: bool,
+    #[arg(long, help = "Force update even if migration issues")]
+    pub force: bool,
 }
 
 #[derive(Args)]
@@ -185,4 +190,30 @@ pub struct ImportArgs {
         help = "Overwrite existing vault files when importing encrypted bundles"
     )]
     pub force: bool,
+}
+
+#[derive(Args)]
+pub struct MigrateArgs {
+    #[command(subcommand)]
+    pub command: MigrateCommands,
+}
+
+#[derive(Subcommand)]
+pub enum MigrateCommands {
+    /// Check if migration is needed for current version to latest
+    Check,
+    /// Create manual backup before update
+    Backup {
+        #[arg(value_name = "path", help = "Backup destination path")]
+        path: PathBuf,
+    },
+    /// Restore from backup
+    Restore {
+        #[arg(value_name = "path", help = "Backup source path to restore from")]
+        path: PathBuf,
+    },
+    /// List available backups
+    List,
+    /// Clean up old backups
+    Cleanup,
 }

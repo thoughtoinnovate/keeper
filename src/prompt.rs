@@ -31,6 +31,7 @@ pub fn prompt_export_password_confirm() -> Result<SecurePassword> {
     prompt_secret("🔐 Confirm Export Password: ")
 }
 
+#[allow(dead_code)]
 pub fn prompt_export_password_secure() -> Result<SecurePassword> {
     let first = prompt_secret("🔐 Export Password: ")?;
     let second = prompt_secret("🔐 Confirm Export Password: ")?;
@@ -45,6 +46,7 @@ pub fn prompt_export_password_secure() -> Result<SecurePassword> {
     Ok(first)
 }
 
+#[allow(dead_code)]
 pub fn display_password_masked(password: &SecurePassword) {
     let password_str = String::from_utf8_lossy(password.as_bytes());
     print!("{}", mask_password_for_display(&password_str));
@@ -57,6 +59,14 @@ pub(crate) fn prompt_secret(prompt: &str) -> Result<SecurePassword> {
     let stdin = io::stdin();
     let is_tty = stdin.is_terminal();
 
+    // Use scopeguard to ensure echo is always restored (SWAP-006)
+    let _echo_guard = scopeguard::guard(is_tty, |was_tty| {
+        if was_tty {
+            set_terminal_echo(true);
+            println!();
+        }
+    });
+
     if is_tty {
         set_terminal_echo(false);
     }
@@ -64,12 +74,7 @@ pub(crate) fn prompt_secret(prompt: &str) -> Result<SecurePassword> {
     let mut secret = String::new();
     stdin.read_line(&mut secret)?;
 
-    if is_tty {
-        set_terminal_echo(true);
-        println!();
-    }
-
-    Ok(secure_password_from_str(&secret.trim().to_string()))
+    Ok(secure_password_from_str(secret.trim()))
 }
 
 fn set_terminal_echo(enabled: bool) {

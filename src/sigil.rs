@@ -97,6 +97,25 @@ pub fn normalize_bucket_filter(input: &str) -> Result<String> {
     if trimmed == "@" {
         return Err(anyhow!("Workspace is required"));
     }
+
+    // Check for null bytes (VALID-001)
+    if trimmed.contains('\0') {
+        return Err(anyhow!("Workspace cannot contain null bytes"));
+    }
+
+    // Check for path traversal sequences (VALID-002)
+    if trimmed.contains("..") || trimmed.contains("../") || trimmed.contains("..\\") {
+        return Err(anyhow!("Workspace cannot contain path traversal sequences"));
+    }
+
+    // Validate characters (alphanumeric, @, /, -, _ only)
+    if !trimmed
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '@' || c == '/' || c == '_' || c == '-')
+    {
+        return Err(anyhow!("Workspace contains invalid characters"));
+    }
+
     if let Some((workspace, bucket)) = trimmed.split_once('/')
         && (workspace.len() <= 1 || bucket.is_empty())
     {
@@ -114,6 +133,25 @@ fn parse_bucket(token: &str, default_workspace: &str) -> Result<Option<String>> 
     if token == "@" {
         return Ok(None);
     }
+
+    // Check for null bytes (VALID-001)
+    if token.contains('\0') {
+        return Err(anyhow!("Bucket cannot contain null bytes"));
+    }
+
+    // Check for path traversal sequences (VALID-002)
+    if token.contains("..") || token.contains("../") || token.contains("..\\") {
+        return Err(anyhow!("Bucket cannot contain path traversal sequences"));
+    }
+
+    // Validate characters (alphanumeric, @, /, -, _ only)
+    if !token
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '@' || c == '/' || c == '_' || c == '-')
+    {
+        return Err(anyhow!("Bucket contains invalid characters"));
+    }
+
     if token.contains('/') {
         return Ok(Some(token.to_string()));
     }

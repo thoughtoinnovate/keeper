@@ -69,11 +69,13 @@ impl Zeroize for SecretString {
 impl ZeroizeOnDrop for SecretString {}
 
 impl SecretString {
+    #[allow(dead_code)]
     pub fn new(s: String) -> Self {
         Self { s }
     }
 
     /// Get reference to inner string
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.s
     }
@@ -162,6 +164,7 @@ pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
 
 /// Export password for secure display
 /// Only displays masked version, never full password
+#[allow(dead_code)]
 pub fn mask_password_for_display(password: &str) -> String {
     if password.len() <= 4 {
         "****".to_string()

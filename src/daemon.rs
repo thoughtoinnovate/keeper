@@ -3,17 +3,23 @@ use crate::ipc::{DaemonRequest, DaemonResponse};
 use crate::keystore::Keystore;
 use crate::models::Status;
 use crate::paths::KeeperPaths;
+use crate::sanitize::sanitize_for_display;
 use crate::{logger, security};
 use anyhow::Result;
 use chrono::Utc;
+use governor::{Quota, RateLimiter};
+use nonzero_ext::nonzero;
 use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use zeroize::Zeroize;
 
 const MAX_IPC_MSG_SIZE: usize = 10_485_760; // 10MB
+const CONNECTION_TIMEOUT_SECS: u64 = 30;
+const RATE_LIMIT_PER_MINUTE: u32 = 60;
 
 pub fn run_daemon(
     mut master_key: [u8; security::MASTER_KEY_LEN],
@@ -24,15 +30,30 @@ pub fn run_daemon(
 
     #[cfg(unix)]
     {
-        use libc::{mlockall, MCL_CURRENT, MCL_FUTURE};
+        use libc::{MCL_CURRENT, MCL_FUTURE, RLIMIT_CORE, mlockall, setrlimit};
+        
+        // Skip mlockall in test mode to allow CI testing without CAP_IPC_LOCK
+        let test_mode = std::env::var("KEEPER_TEST_MODE").is_ok();
+        
         unsafe {
-            if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
-                return Err(anyhow::anyhow!(
-                    "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
-                     Increase ulimit -l or run with CAP_IPC_LOCK permission. \
-                     Exiting for security."
-                ));
+            if !test_mode {
+                if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
+                    return Err(anyhow::anyhow!(
+                        "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
+                         Increase ulimit -l or run with CAP_IPC_LOCK permission. \
+                         Exiting for security."
+                    ));
+                }
+            } else {
+                logger::debug("Test mode: skipping mlockall()");
             }
+
+            // Disable core dumps to prevent sensitive data leakage (MISC-001)
+            let new_limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            setrlimit(RLIMIT_CORE, &new_limit);
         }
     }
 
@@ -89,6 +110,10 @@ pub fn run_daemon(
     let connection_count = Arc::new(AtomicUsize::new(0));
     const MAX_CONNECTIONS: usize = 50;
 
+    let rate_limiter = Arc::new(RateLimiter::direct(Quota::per_minute(nonzero!(
+        RATE_LIMIT_PER_MINUTE
+    ))));
+
     while running.load(Ordering::SeqCst) {
         if connection_count.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
             logger::error("Maximum connections reached");
@@ -104,25 +129,42 @@ pub fn run_daemon(
             }
         };
 
+        // Verify peer credentials (AUTH-001)
+        if let Err(err) = verify_peer_credentials(&stream) {
+            logger::warn(&format!("Peer credential verification failed: {err}"));
+            let _ = stream.shutdown(Shutdown::Both);
+            continue;
+        }
+
         let last_activity = last_activity.clone();
         let password_attempts = password_attempts.clone();
         let last_password_attempt = last_password_attempt.clone();
         let connection_count = connection_count.clone();
+        let rate_limiter = rate_limiter.clone();
 
         connection_count.fetch_add(1, Ordering::SeqCst);
 
         logger::debug("Accepted IPC connection");
-        if let Err(err) = handle_connection(
-            stream,
-            &db,
-            &running,
-            paths,
-            &master_key,
-            &last_activity,
-            &password_attempts,
-            &last_password_attempt,
-        ) {
-            logger::error(&format!("IPC handler error: {err}"));
+        // Check rate limit before handling connection
+        match rate_limiter.check() {
+            Ok(()) => {
+                if let Err(err) = handle_connection(
+                    stream,
+                    &db,
+                    &running,
+                    paths,
+                    &master_key,
+                    &last_activity,
+                    &password_attempts,
+                    &last_password_attempt,
+                ) {
+                    logger::error(&format!("IPC handler error: {err}"));
+                }
+            }
+            Err(_) => {
+                logger::warn("Rate limit exceeded for connection");
+                let _ = stream.shutdown(Shutdown::Both);
+            }
         }
 
         connection_count.fetch_sub(1, Ordering::SeqCst);
@@ -134,6 +176,7 @@ pub fn run_daemon(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_connection(
     stream: UnixStream,
     db: &Db,
@@ -157,16 +200,26 @@ fn handle_connection(
     }
 
     let mut stream = stream;
-    
+    let start_time = Instant::now();
+    let timeout_duration = Duration::from_secs(CONNECTION_TIMEOUT_SECS);
+
     // Bounded read with size limit
     let mut buf = Vec::with_capacity(8192);
     let mut bytes_read = 0;
     let mut chunk = [0u8; 8192];
-    
+
     loop {
+        // Check for connection timeout
+        if start_time.elapsed() > timeout_duration {
+            logger::warn("Connection timeout - possible slowloris attack");
+            return Err(anyhow::anyhow!("Connection timeout"));
+        }
+
         let n = stream.read(&mut chunk)?;
-        if n == 0 { break; }
-        
+        if n == 0 {
+            break;
+        }
+
         bytes_read += n;
         if bytes_read > MAX_IPC_MSG_SIZE {
             logger::error("IPC message exceeds 10MB limit");
@@ -174,7 +227,7 @@ fn handle_connection(
             send_response(&mut stream, &resp)?;
             return Ok(());
         }
-        
+
         buf.extend_from_slice(&chunk[..n]);
     }
 
@@ -182,7 +235,8 @@ fn handle_connection(
         Ok(req) => req,
         Err(err) => {
             logger::error(&format!("Invalid request: {err}"));
-            let resp = DaemonResponse::Error(format!("Invalid request: {err}"));
+            let sanitized = sanitize_for_display(&err.to_string());
+            let resp = DaemonResponse::Error(format!("Invalid request: {sanitized}"));
             send_response(&mut stream, &resp)?;
             return Ok(());
         }
@@ -197,14 +251,12 @@ fn handle_connection(
         let attempts = password_attempts.fetch_add(1, Ordering::SeqCst);
         let last_attempt = last_password_attempt.swap(now, Ordering::SeqCst);
 
-        if now - last_attempt < 30 {
-            if attempts >= 3 {
-                let lockout_duration = 30u64.pow((attempts.saturating_sub(2)).min(6) as u32);
-                return Err(anyhow::anyhow!(
-                    "Too many failed password attempts. Try again in {} seconds.",
-                    lockout_duration
-                ));
-            }
+        if now - last_attempt < 30 && attempts >= 3 {
+            let lockout_duration = 30u64.pow((attempts.saturating_sub(2)).min(6) as u32);
+            return Err(anyhow::anyhow!(
+                "Too many failed password attempts. Try again in {} seconds.",
+                lockout_duration
+            ));
         }
     }
 
@@ -221,10 +273,13 @@ fn handle_connection(
                 Ok(InsertOutcome::Inserted(id)) => {
                     DaemonResponse::OkMessage(format!("[✓] Saved to {bucket} (ID: {id})"))
                 }
-                Ok(InsertOutcome::Duplicate(id)) => {
-                    DaemonResponse::OkMessage(format!("[=] Duplicate ignored in {bucket} (ID: {id})"))
+                Ok(InsertOutcome::Duplicate(id)) => DaemonResponse::OkMessage(format!(
+                    "[=] Duplicate ignored in {bucket} (ID: {id})"
+                )),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to save note: {sanitized}"))
                 }
-                Err(err) => DaemonResponse::Error(format!("Failed to save note: {err}")),
             }
         }
         DaemonRequest::GetItems {
@@ -245,14 +300,20 @@ fn handle_connection(
                 notes_only,
             ) {
                 Ok(items) => DaemonResponse::OkItems(items),
-                Err(err) => DaemonResponse::Error(format!("Failed to fetch items: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to fetch items: {sanitized}"))
+                }
             }
         }
         DaemonRequest::ListBuckets => {
             last_activity.store(now, Ordering::SeqCst);
             match db.list_buckets() {
                 Ok(buckets) => DaemonResponse::OkBuckets(buckets),
-                Err(err) => DaemonResponse::Error(format!("Failed to list buckets: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to list buckets: {sanitized}"))
+                }
             }
         }
         DaemonRequest::UpdateStatus { id, new_status } => {
@@ -260,7 +321,10 @@ fn handle_connection(
             match db.update_status(id, new_status) {
                 Ok(true) => DaemonResponse::OkMessage("Updated status".to_string()),
                 Ok(false) => DaemonResponse::Error("Item not found".to_string()),
-                Err(err) => DaemonResponse::Error(format!("Failed to update status: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to update status: {sanitized}"))
+                }
             }
         }
         DaemonRequest::UpdateItem {
@@ -272,15 +336,14 @@ fn handle_connection(
             clear_due_date,
         } => {
             last_activity.store(now, Ordering::SeqCst);
-            let due_update = if clear_due_date {
-                Some(None)
-            } else {
-                due_date
-            };
+            let due_update = if clear_due_date { Some(None) } else { due_date };
             match db.update_item(id, bucket, content, priority, due_update) {
                 Ok(true) => DaemonResponse::OkMessage("Updated item".to_string()),
                 Ok(false) => DaemonResponse::Error("Item not found or no updates".to_string()),
-                Err(err) => DaemonResponse::Error(format!("Failed to update item: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to update item: {sanitized}"))
+                }
             }
         }
         DaemonRequest::RotatePassword {
@@ -307,13 +370,19 @@ fn handle_connection(
                                     Ok(()) => {
                                         DaemonResponse::OkMessage("Password updated".to_string())
                                     }
-                                    Err(err) => DaemonResponse::Error(format!(
-                                        "Failed to save keystore: {err}"
-                                    )),
+                                    Err(err) => {
+                                        let sanitized = sanitize_for_display(&err.to_string());
+                                        DaemonResponse::Error(format!(
+                                            "Failed to save keystore: {sanitized}"
+                                        ))
+                                    }
                                 },
-                                Err(err) => DaemonResponse::Error(format!(
-                                    "Failed to update password: {err}"
-                                )),
+                                Err(err) => {
+                                    let sanitized = sanitize_for_display(&err.to_string());
+                                    DaemonResponse::Error(format!(
+                                        "Failed to update password: {sanitized}"
+                                    ))
+                                }
                             }
                         }
                     }
@@ -322,7 +391,10 @@ fn handle_connection(
                         DaemonResponse::Error("Invalid current password".to_string())
                     }
                 },
-                Err(err) => DaemonResponse::Error(format!("Failed to load keystore: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to load keystore: {sanitized}"))
+                }
             };
             current_password.zeroize();
             new_password.zeroize();
@@ -334,9 +406,15 @@ fn handle_connection(
             let response = match Keystore::create_from_master_key(&new_password, master_key) {
                 Ok((keystore, recovery)) => match keystore.save(paths.keystore_path()) {
                     Ok(()) => DaemonResponse::OkRecoveryCode(recovery),
-                    Err(err) => DaemonResponse::Error(format!("Failed to save keystore: {err}")),
+                    Err(err) => {
+                        let sanitized = sanitize_for_display(&err.to_string());
+                        DaemonResponse::Error(format!("Failed to save keystore: {sanitized}"))
+                    }
                 },
-                Err(err) => DaemonResponse::Error(format!("Failed to rebuild keystore: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to rebuild keystore: {sanitized}"))
+                }
             };
             new_password.zeroize();
             password_attempts.store(0, Ordering::SeqCst);
@@ -350,7 +428,10 @@ fn handle_connection(
                     done_today,
                     p1,
                 },
-                Err(err) => DaemonResponse::Error(format!("Failed to fetch stats: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to fetch stats: {sanitized}"))
+                }
             }
         }
         DaemonRequest::ImportItems { items } => {
@@ -361,7 +442,8 @@ fn handle_connection(
                 match db.upsert_item(&item) {
                     Ok(()) => count += 1,
                     Err(err) => {
-                        error = Some(format!("Failed to import item {}: {err}", item.id));
+                        let sanitized = sanitize_for_display(&err.to_string());
+                        error = Some(format!("Failed to import item {}: {sanitized}", item.id));
                         break;
                     }
                 }
@@ -375,7 +457,10 @@ fn handle_connection(
             last_activity.store(now, Ordering::SeqCst);
             match db.archive_all() {
                 Ok(count) => DaemonResponse::OkMessage(format!("Archived {count} item(s)")),
-                Err(err) => DaemonResponse::Error(format!("Failed to archive: {err}")),
+                Err(err) => {
+                    let sanitized = sanitize_for_display(&err.to_string());
+                    DaemonResponse::Error(format!("Failed to archive: {sanitized}"))
+                }
             }
         }
         DaemonRequest::Undo { id } => {
@@ -384,13 +469,19 @@ fn handle_connection(
                 match db.update_status(id, Status::Open) {
                     Ok(true) => DaemonResponse::OkMessage(format!("Restored {id}")),
                     Ok(false) => DaemonResponse::Error("Item not found".to_string()),
-                    Err(err) => DaemonResponse::Error(format!("Failed to undo: {err}")),
+                    Err(err) => {
+                        let sanitized = sanitize_for_display(&err.to_string());
+                        DaemonResponse::Error(format!("Failed to undo: {sanitized}"))
+                    }
                 }
             } else {
                 match db.undo_last() {
                     Ok(Some(id)) => DaemonResponse::OkMessage(format!("Restored {id}")),
                     Ok(None) => DaemonResponse::OkMessage("No archived items".to_string()),
-                    Err(err) => DaemonResponse::Error(format!("Failed to undo: {err}")),
+                    Err(err) => {
+                        let sanitized = sanitize_for_display(&err.to_string());
+                        DaemonResponse::Error(format!("Failed to undo: {sanitized}"))
+                    }
                 }
             }
         }
@@ -418,4 +509,29 @@ pub fn parse_status(value: &str) -> Option<Status> {
         "deleted" => Some(Status::Deleted),
         _ => None,
     }
+}
+
+#[cfg(unix)]
+fn verify_peer_credentials(stream: &UnixStream) -> Result<()> {
+    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+    use nix::unistd::Uid;
+
+    let creds = getsockopt(stream, PeerCredentials)
+        .map_err(|e| anyhow::anyhow!("Failed to get peer credentials: {e}"))?;
+
+    let peer_uid = Uid::from_raw(creds.uid());
+    let effective_uid = Uid::effective();
+
+    if peer_uid != effective_uid {
+        return Err(anyhow::anyhow!(
+            "Unauthorized user: expected UID {effective_uid}, got {peer_uid}"
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_peer_credentials(_stream: &UnixStream) -> Result<()> {
+    Ok(())
 }

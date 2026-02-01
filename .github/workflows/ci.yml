@@ -1,26 +1,59 @@
 name: CI
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 env:
   CARGO_TERM_COLOR: always
+  KEEPER_TEST_MODE: "1"  # Skip mlockall() in tests for CI
+
 jobs:
   test:
     name: Test Suite (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+      
       - name: Check Formatting
         run: cargo fmt --all -- --check
+      
       - name: Clippy Lint
-        run: cargo clippy -- -D warnings
-      - name: Run Tests
-        run: cargo test
+        run: cargo clippy --all-targets -- -D warnings
+      
+      - name: Run Unit Tests
+        run: cargo test --lib
+        env:
+          KEEPER_TEST_MODE: "1"
+      
+      - name: Run BDD Tests
+        run: cargo test --test bdd
+        env:
+          KEEPER_TEST_MODE: "1"
+      
+      - name: Run E2E Tests
+        run: cargo test --test e2e
+        env:
+          KEEPER_TEST_MODE: "1"
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Run Security Audit
+        uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
