@@ -511,7 +511,7 @@ pub fn parse_status(value: &str) -> Option<Status> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn verify_peer_credentials(stream: &UnixStream) -> Result<()> {
     use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
     use nix::unistd::Uid;
@@ -531,7 +531,9 @@ fn verify_peer_credentials(stream: &UnixStream) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 fn verify_peer_credentials(_stream: &UnixStream) -> Result<()> {
+    // Peer credential verification is Linux-only
+    // On macOS and other platforms, this is a no-op
     Ok(())
 }
