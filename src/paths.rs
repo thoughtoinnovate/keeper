@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use directories::BaseDirs;
 use std::path::{Path, PathBuf};
 

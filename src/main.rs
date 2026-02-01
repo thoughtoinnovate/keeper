@@ -772,10 +772,7 @@ fn cmd_migrate_restore(paths: &KeeperPaths, backup_path: PathBuf) -> Result<()> 
     }
 
     if !backup_path.exists() {
-        return Err(anyhow!(
-            "Backup not found at {}"
-            , backup_path.display()
-        ));
+        return Err(anyhow!("Backup not found at {}", backup_path.display()));
     }
 
     println!("⚠️  This will restore your vault from backup.");
@@ -823,12 +820,12 @@ fn cmd_migrate_list(paths: &KeeperPaths) -> Result<()> {
         let verified = manager.verify_backup(backup)?;
         let status = if verified { "✅" } else { "❌" };
         println!(
-            "  {}. {} -> {} ({}) {}"
-            , i + 1
-            , backup.original_version
-            , backup.target_version
-            , backup.created_at.split('T').next().unwrap_or("unknown")
-            , status
+            "  {}. {} -> {} ({}) {}",
+            i + 1,
+            backup.original_version,
+            backup.target_version,
+            backup.created_at.split('T').next().unwrap_or("unknown"),
+            status
         );
         println!("     Path: {}", backup.backup_dir.display());
         println!("     Checksum: {}...", &backup.checksum[..16]);
@@ -842,7 +839,10 @@ fn cmd_migrate_cleanup(paths: &KeeperPaths) -> Result<()> {
 
     let backups = manager.list_backups()?;
     if backups.len() <= 5 {
-        println!("No cleanup needed ({} backup(s) found, keep 5)", backups.len());
+        println!(
+            "No cleanup needed ({} backup(s) found, keep 5)",
+            backups.len()
+        );
         return Ok(());
     }
 
@@ -850,7 +850,8 @@ fn cmd_migrate_cleanup(paths: &KeeperPaths) -> Result<()> {
     println!("The following backups will be removed:");
 
     for backup in backups.iter().skip(5) {
-        println!("  - {} ({} -> {})",
+        println!(
+            "  - {} ({} -> {})",
             backup.backup_dir.display(),
             backup.original_version,
             backup.target_version
