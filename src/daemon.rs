@@ -31,10 +31,10 @@ pub fn run_daemon(
     #[cfg(unix)]
     {
         use libc::{MCL_CURRENT, MCL_FUTURE, RLIMIT_CORE, mlockall, setrlimit};
-        
+
         // Skip mlockall in test mode to allow CI testing without CAP_IPC_LOCK
         let test_mode = std::env::var("KEEPER_TEST_MODE").is_ok();
-        
+
         unsafe {
             if !test_mode {
                 if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {

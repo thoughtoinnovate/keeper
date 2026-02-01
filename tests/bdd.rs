@@ -1,4 +1,4 @@
-use cucumber::{given, then, when, World};
+use cucumber::{World, given, then, when};
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
@@ -81,7 +81,7 @@ fn migration_manifest_configured(world: &mut KeeperWorld) {
         "manifest_version": "1.0.0",
         "versions": {}
     });
-    
+
     let manifest_path = world.home.path().join(".keeper/migration_manifest.json");
     fs::create_dir_all(manifest_path.parent().unwrap()).expect("create dir");
     fs::write(&manifest_path, manifest.to_string()).expect("write manifest");
@@ -143,11 +143,11 @@ fn check_migration(world: &mut KeeperWorld) {
         let target_parts: Vec<u32> = target.split('.').map(|s| s.parse().unwrap_or(0)).collect();
 
         // Check if this is a major/minor version change that would require migration
-        let is_breaking = target_parts[0] > current_parts[0] || 
-            (target_parts[0] == current_parts[0] && target_parts[1] > current_parts[1]);
-        
+        let is_breaking = target_parts[0] > current_parts[0]
+            || (target_parts[0] == current_parts[0] && target_parts[1] > current_parts[1]);
+
         world.migration_required = Some(is_breaking);
-        
+
         // Set migration type based on whether it's a breaking change
         if is_breaking {
             world.migration_type = Some("full_export_import".to_string());
@@ -175,11 +175,11 @@ fn migration_required(world: &mut KeeperWorld) {
 
 #[then(expr = "the migration type should be {string}")]
 fn migration_type(world: &mut KeeperWorld, expected_type: String) {
-        assert_eq!(
-            world.migration_type.as_deref(),
-            Some(expected_type.as_str()),
-            "Migration type mismatch"
-        );
+    assert_eq!(
+        world.migration_type.as_deref(),
+        Some(expected_type.as_str()),
+        "Migration type mismatch"
+    );
 }
 
 #[then("migration should be incompatible")]
@@ -224,7 +224,9 @@ fn see_migration_status(world: &mut KeeperWorld) {
     if let Some(ref output) = world.last_output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("Migration") || stdout.contains("Update") || stdout.contains("migration"),
+            stdout.contains("Migration")
+                || stdout.contains("Update")
+                || stdout.contains("migration"),
             "Should show migration status, got: {}",
             stdout
         );
@@ -243,7 +245,7 @@ fn vault_exists(world: &mut KeeperWorld, password: String) {
     let vault_dir = world.home.path().join(".keeper");
     let keystore_exists = vault_dir.join("keystore.json").exists();
     assert!(keystore_exists, "Vault keystore should be created");
-    
+
     // Create a mock vault.db for backup tests (real one requires daemon)
     if !vault_dir.join("vault.db").exists() {
         // Create empty vault.db file for backup command to find
@@ -257,10 +259,10 @@ fn run_migrate_backup(world: &mut KeeperWorld) {
     // Real backup requires daemon and vault.db which are hard to set up in tests
     let backup_dir = world.home.path().join(".keeper/migrations");
     fs::create_dir_all(&backup_dir).expect("create migrations dir");
-    
+
     let mock_backup = backup_dir.join("backup_test");
     fs::create_dir_all(&mock_backup).expect("create mock backup dir");
-    
+
     // Create mock metadata
     let metadata = serde_json::json!({
         "original_version": "0.2.0",
@@ -274,12 +276,15 @@ fn run_migrate_backup(world: &mut KeeperWorld) {
         metadata.to_string(),
     )
     .expect("write metadata");
-    
+
     // Also try to run the real command, but don't fail if it doesn't work
     let backup_path = world.home.path().join("test_backup");
     if let Some(ref password) = world.vault_password {
         let stdin = format!("{}\n", password);
-        let _ = world.run_keeper(&["migrate", "backup", &backup_path.to_string_lossy()], Some(&stdin));
+        let _ = world.run_keeper(
+            &["migrate", "backup", &backup_path.to_string_lossy()],
+            Some(&stdin),
+        );
     }
 }
 

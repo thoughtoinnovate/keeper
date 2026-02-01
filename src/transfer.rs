@@ -2,9 +2,9 @@ use crate::export;
 
 use crate::keystore;
 use crate::paths::KeeperPaths;
-use crate::security::memory::{constant_time_compare, SecurePassword};
+use crate::security::memory::{SecurePassword, constant_time_compare};
 use crate::{client, db, models, prompt, security};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use zeroize::Zeroize;
 
 pub fn run_export(paths: &KeeperPaths, args: crate::cli::ExportArgs) -> Result<()> {

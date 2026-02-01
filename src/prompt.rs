@@ -1,9 +1,9 @@
 use crate::logger;
 use crate::security::memory::{
-    constant_time_compare, mask_password_for_display, prompt_password_confirm_secure,
-    secure_password_from_str, SecurePassword,
+    SecurePassword, constant_time_compare, mask_password_for_display,
+    prompt_password_confirm_secure, secure_password_from_str,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::io::{self, IsTerminal, Write};
 use std::process::{Command, Stdio};
 
