@@ -89,8 +89,10 @@ jobs:
             ls -la
             exit 1
           fi
-          key_file="$(mktemp)"
-          printf "%s" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          key_dir="${HOME}/.minisign"
+          key_file="${key_dir}/minisign.key"
+          mkdir -p "${key_dir}"
+          printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
           chmod 600 "${key_file}"
           minisign -Sm -s "${key_file}" -m "${archive}"
           rm -f "${key_file}"
@@ -122,8 +124,10 @@ jobs:
             echo "MINISIGN_SECRET_KEY is not set"
             exit 1
           fi
-          key_file="$(mktemp)"
-          printf "%s" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          key_dir="${HOME}/.minisign"
+          key_file="${key_dir}/minisign.key"
+          mkdir -p "${key_dir}"
+          printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
           chmod 600 "${key_file}"
           shopt -s nullglob
           for asset in keeper-*.tar.gz keeper-*.zip; do
