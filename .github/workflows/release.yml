@@ -109,6 +109,12 @@ jobs:
             fi
           fi
           if ! grep -q "untrusted comment:" "${key_file}"; then
+            if grep -Eq '^RW[0-9A-Za-z+/=]{40,}$' "${key_file}"; then
+              key_line="$(tr -d '\r\n' < "${key_file}")"
+              printf "untrusted comment: minisign secret key\n%s\n" "${key_line}" > "${key_file}"
+            fi
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
             echo "MINISIGN_SECRET_KEY is not a valid minisign secret key"
             exit 1
           fi
@@ -164,6 +170,12 @@ jobs:
               else
                 printf "%s" "${MINISIGN_SECRET_KEY}" | base64 -D > "${key_file}" 2>/dev/null || true
               fi
+            fi
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
+            if grep -Eq '^RW[0-9A-Za-z+/=]{40,}$' "${key_file}"; then
+              key_line="$(tr -d '\r\n' < "${key_file}")"
+              printf "untrusted comment: minisign secret key\n%s\n" "${key_line}" > "${key_file}"
             fi
           fi
           if ! grep -q "untrusted comment:" "${key_file}"; then
