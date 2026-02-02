@@ -54,6 +54,15 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_DIR=C:\vcpkg\installed\$triplet" -Encoding utf8
           Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_LIB_DIR=C:\vcpkg\installed\$triplet\lib" -Encoding utf8
           Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\$triplet\include" -Encoding utf8
+      - name: Install minisign (non-Windows)
+        if: !startsWith(matrix.config.os, 'windows')
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y minisign
+          else
+            brew install minisign
+          fi
       - name: Build and Upload Asset
         uses: taiki-e/upload-rust-binary-action@v1
         with:
@@ -63,6 +72,29 @@ jobs:
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
           include: LICENSE,README.md
+      - name: Sign and upload minisig (non-Windows)
+        if: !startsWith(matrix.config.os, 'windows')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+            echo "MINISIGN_SECRET_KEY is not set"
+            exit 1
+          fi
+          archive="keeper-${{ matrix.config.target }}.tar.gz"
+          if [ ! -f "${archive}" ]; then
+            echo "Archive not found: ${archive}"
+            ls -la
+            exit 1
+          fi
+          key_file="$(mktemp)"
+          printf "%s" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          chmod 600 "${key_file}"
+          minisign -Sm -s "${key_file}" -m "${archive}"
+          rm -f "${key_file}"
+          gh release upload "${{ github.ref_name }}" "${archive}.minisig" --clobber --repo "${GH_REPO}"
 
   sign-assets:
     name: Sign release assets
