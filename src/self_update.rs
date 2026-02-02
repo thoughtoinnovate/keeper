@@ -14,7 +14,7 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/thoughtoinnovate/keep
 
 // Ed25519 public key for release signature verification (SWAP-005)
 // This is the minisign public key for verifying keeper releases
-const RELEASE_PUBKEY: &str = "RWQfM2V3GXz+nRZv7D+K/s+xe3NGW5h8r2uJ0Q5x2G4=";
+const RELEASE_PUBKEY: &str = "RWSaLylXLNYPt2JBSRlegtNvCs80NfAZOScTDX38OUrFwKSHV3ipeUN3";
 
 /// Result of checking for updates
 #[derive(Debug, Clone)]
