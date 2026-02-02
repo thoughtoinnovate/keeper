@@ -92,7 +92,25 @@ jobs:
           key_dir="${HOME}/.minisign"
           key_file="${key_dir}/minisign.key"
           mkdir -p "${key_dir}"
-          printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          # Support raw, escaped, or base64-encoded secrets without leaking content.
+          if printf "%s" "${MINISIGN_SECRET_KEY}" | grep -q "untrusted comment:"; then
+            printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          else
+            printf "%b" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
+            if command -v base64 >/dev/null 2>&1; then
+              if base64 --help 2>&1 | grep -q -- "-d"; then
+                printf "%s" "${MINISIGN_SECRET_KEY}" | base64 -d > "${key_file}" 2>/dev/null || true
+              else
+                printf "%s" "${MINISIGN_SECRET_KEY}" | base64 -D > "${key_file}" 2>/dev/null || true
+              fi
+            fi
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
+            echo "MINISIGN_SECRET_KEY is not a valid minisign secret key"
+            exit 1
+          fi
           chmod 600 "${key_file}"
           minisign -Sm -s "${key_file}" -m "${archive}"
           rm -f "${key_file}"
@@ -127,7 +145,25 @@ jobs:
           key_dir="${HOME}/.minisign"
           key_file="${key_dir}/minisign.key"
           mkdir -p "${key_dir}"
-          printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          # Support raw, escaped, or base64-encoded secrets without leaking content.
+          if printf "%s" "${MINISIGN_SECRET_KEY}" | grep -q "untrusted comment:"; then
+            printf "%s\n" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          else
+            printf "%b" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
+            if command -v base64 >/dev/null 2>&1; then
+              if base64 --help 2>&1 | grep -q -- "-d"; then
+                printf "%s" "${MINISIGN_SECRET_KEY}" | base64 -d > "${key_file}" 2>/dev/null || true
+              else
+                printf "%s" "${MINISIGN_SECRET_KEY}" | base64 -D > "${key_file}" 2>/dev/null || true
+              fi
+            fi
+          fi
+          if ! grep -q "untrusted comment:" "${key_file}"; then
+            echo "MINISIGN_SECRET_KEY is not a valid minisign secret key"
+            exit 1
+          fi
           chmod 600 "${key_file}"
           shopt -s nullglob
           for asset in keeper-*.tar.gz keeper-*.zip; do
