@@ -30,7 +30,7 @@ pub fn run_daemon(
 
     #[cfg(unix)]
     {
-        use libc::{MCL_CURRENT, MCL_FUTURE, RLIMIT_CORE, mlockall, setrlimit};
+        use libc::{MCL_CURRENT, MCL_FUTURE, RLIMIT_CORE, mlock, mlockall, setrlimit};
 
         // Skip mlockall in test mode to allow CI testing without CAP_IPC_LOCK
         let test_mode = std::env::var("KEEPER_TEST_MODE").is_ok();
@@ -66,19 +66,39 @@ pub fn run_daemon(
             }
             if !test_mode {
                 if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
-                    if allow_insecure_memlock {
+                    let err = std::io::Error::last_os_error();
+                    let err_no = err.raw_os_error().unwrap_or(0);
+                    if cfg!(target_os = "macos") && err_no == libc::ENOSYS {
+                        // macOS may not implement mlockall; try locking only the master key.
+                        let key_ptr = master_key.as_ptr() as *const libc::c_void;
+                        let key_len = master_key.len();
+                        if mlock(key_ptr, key_len) == 0 {
+                            logger::warn(
+                                "mlockall unsupported on this macOS; locked master key only",
+                            );
+                        } else if allow_insecure_memlock {
+                            logger::warn(
+                                "Insecure mode: failed to lock memory; continuing without mlock/ mlockall",
+                            );
+                        } else {
+                            let err = std::io::Error::last_os_error();
+                            return Err(anyhow::anyhow!(
+                                "CRITICAL: Failed to lock memory ({err}). Keys would be swapped to \
+                                 disk. Increase max locked memory limits (launchctl limit) and \
+                                 ulimit -l. Exiting for security."
+                            ));
+                        }
+                    } else if allow_insecure_memlock {
                         logger::warn(
                             "Insecure mode: failed to lock memory; continuing without mlockall()",
                         );
                     } else if cfg!(target_os = "macos") {
-                        let err = std::io::Error::last_os_error();
                         return Err(anyhow::anyhow!(
                             "CRITICAL: Failed to lock memory ({err}). Keys would be swapped to \
                              disk. Increase max locked memory limits (launchctl limit) and \
                              ulimit -l. Exiting for security."
                         ));
                     } else {
-                        let err = std::io::Error::last_os_error();
                         return Err(anyhow::anyhow!(
                             "CRITICAL: Failed to lock memory ({err}). Keys would be swapped to \
                              disk. Increase ulimit -l or run with CAP_IPC_LOCK permission. \
