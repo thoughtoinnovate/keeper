@@ -91,6 +91,7 @@ jobs:
           fi
           key_dir="${HOME}/.minisign"
           key_file="${key_dir}/minisign.key"
+          umask 077
           mkdir -p "${key_dir}"
           # Support raw, escaped, or base64-encoded secrets without leaking content.
           if printf "%s" "${MINISIGN_SECRET_KEY}" | grep -q "untrusted comment:"; then
@@ -113,7 +114,11 @@ jobs:
           fi
           chmod 600 "${key_file}"
           minisign -Sm -s "${key_file}" -m "${archive}"
-          rm -f "${key_file}"
+          if command -v shred >/dev/null 2>&1; then
+            shred -u "${key_file}"
+          else
+            rm -f "${key_file}"
+          fi
           gh release upload "${{ github.ref_name }}" "${archive}.minisig" --clobber --repo "${GH_REPO}"
 
   sign-assets:
@@ -144,6 +149,7 @@ jobs:
           fi
           key_dir="${HOME}/.minisign"
           key_file="${key_dir}/minisign.key"
+          umask 077
           mkdir -p "${key_dir}"
           # Support raw, escaped, or base64-encoded secrets without leaking content.
           if printf "%s" "${MINISIGN_SECRET_KEY}" | grep -q "untrusted comment:"; then
@@ -169,7 +175,11 @@ jobs:
           for asset in keeper-*.tar.gz keeper-*.zip; do
             minisign -Sm -s "${key_file}" -m "${asset}"
           done
-          rm -f "${key_file}"
+          if command -v shred >/dev/null 2>&1; then
+            shred -u "${key_file}"
+          else
+            rm -f "${key_file}"
+          fi
       - name: Upload minisig files
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
