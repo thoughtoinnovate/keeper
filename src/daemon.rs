@@ -4,7 +4,7 @@ use crate::keystore::Keystore;
 use crate::models::Status;
 use crate::paths::KeeperPaths;
 use crate::sanitize::sanitize_for_display;
-use crate::{logger, security};
+use crate::{config, logger, security};
 use anyhow::Result;
 use chrono::Utc;
 use governor::{Quota, RateLimiter};
@@ -34,15 +34,45 @@ pub fn run_daemon(
 
         // Skip mlockall in test mode to allow CI testing without CAP_IPC_LOCK
         let test_mode = std::env::var("KEEPER_TEST_MODE").is_ok();
+        let mut allow_insecure_memlock = std::env::var("KEEPER_ALLOW_INSECURE_MEMLOCK")
+            .map(|value| {
+                let value = value.to_ascii_lowercase();
+                value == "1" || value == "true" || value == "yes" || value == "y"
+            })
+            .unwrap_or(false);
+        if !allow_insecure_memlock {
+            match config::Config::load(paths) {
+                Ok(cfg) => {
+                    allow_insecure_memlock = cfg.allow_insecure_memlock;
+                }
+                Err(err) => {
+                    logger::warn(&format!(
+                        "Failed to load config; ignoring allow_insecure_memlock setting: {err}"
+                    ));
+                }
+            }
+        }
 
         unsafe {
             if !test_mode {
                 if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
-                    return Err(anyhow::anyhow!(
-                        "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
-                         Increase ulimit -l or run with CAP_IPC_LOCK permission. \
-                         Exiting for security."
-                    ));
+                    if allow_insecure_memlock {
+                        logger::warn(
+                            "Insecure mode: failed to lock memory; continuing without mlockall()",
+                        );
+                    } else if cfg!(target_os = "macos") {
+                        return Err(anyhow::anyhow!(
+                            "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
+                             Increase max locked memory limits (launchctl limit) and ulimit -l. \
+                             Exiting for security."
+                        ));
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
+                             Increase ulimit -l or run with CAP_IPC_LOCK permission. \
+                             Exiting for security."
+                        ));
+                    }
                 }
             } else {
                 logger::debug("Test mode: skipping mlockall()");

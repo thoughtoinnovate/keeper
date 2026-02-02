@@ -8,12 +8,15 @@ const DEFAULT_WORKSPACE: &str = "@default";
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub default_workspace: String,
+    #[serde(default)]
+    pub allow_insecure_memlock: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             default_workspace: DEFAULT_WORKSPACE.to_string(),
+            allow_insecure_memlock: false,
         }
     }
 }

@@ -34,6 +34,7 @@ pub enum Commands {
     Start,
     Stop,
     Status,
+    Doctor(DoctorArgs),
     Passwd,
     Recover(RecoverArgs),
     Note(NoteArgs),
@@ -116,6 +117,12 @@ pub struct UpdateArgs {
 pub struct RecoverArgs {
     #[arg(long)]
     pub code: Option<String>,
+}
+
+#[derive(Args)]
+pub struct DoctorArgs {
+    #[arg(long, help = "Attempt to apply recommended fixes (may require sudo)")]
+    pub fix: bool,
 }
 
 #[derive(Args)]

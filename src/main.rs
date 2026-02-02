@@ -60,6 +60,7 @@ fn run() -> Result<()> {
         Some(Commands::Start) => cmd_start(&paths, cli.debug, cli.show_recovery),
         Some(Commands::Stop) => cmd_stop(&paths),
         Some(Commands::Status) => cmd_status(&paths),
+        Some(Commands::Doctor(args)) => cmd_doctor(&paths, args.fix),
         Some(Commands::Passwd) => cmd_passwd(&paths),
         Some(Commands::Recover(args)) => cmd_recover(&paths, args),
         Some(Commands::Note(args)) => cmd_note(&paths, args),
@@ -92,8 +93,8 @@ fn is_running_as_root() -> bool {
     false
 }
 
-/// Check if the binary has CAP_IPC_LOCK capability
-#[cfg(unix)]
+/// Check if the binary has CAP_IPC_LOCK capability (Linux only)
+#[cfg(target_os = "linux")]
 fn has_ipc_lock_capability() -> bool {
     use std::process::Command;
 
@@ -114,9 +115,9 @@ fn has_ipc_lock_capability() -> bool {
     false
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 fn has_ipc_lock_capability() -> bool {
-    true // Non-Unix systems don't use this capability model
+    true // Non-Linux systems don't use CAP_IPC_LOCK
 }
 
 /// Display pre-flight security warnings
@@ -128,23 +129,118 @@ fn check_security_prerequisites() {
             eprintln!("⚠️  WARNING: Running keeper with sudo/root is NOT recommended.");
             eprintln!("   It creates root-owned files that you'll need sudo to access.");
             eprintln!("   ");
-            eprintln!("   RECOMMENDED: Grant capability instead:");
-            eprintln!("     sudo setcap cap_ipc_lock+ep $(which keeper)");
-            eprintln!("   Then run keeper normally without sudo.");
+            if cfg!(target_os = "linux") {
+                eprintln!("   RECOMMENDED: Grant capability instead:");
+                eprintln!("     sudo setcap cap_ipc_lock+ep $(which keeper)");
+                eprintln!("   Then run keeper normally without sudo.");
+            } else if cfg!(target_os = "macos") {
+                eprintln!("   On macOS, adjust max locked memory limits instead:");
+                eprintln!("     sudo launchctl limit memlock unlimited unlimited");
+                eprintln!("     ulimit -l unlimited");
+            }
             eprintln!();
         }
 
+        check_memlock_limit();
+
         // Check for CAP_IPC_LOCK capability
-        if !has_ipc_lock_capability() && !is_running_as_root() {
+        if cfg!(target_os = "linux") && !has_ipc_lock_capability() && !is_running_as_root() {
             eprintln!("⚠️  NOTE: Binary lacks CAP_IPC_LOCK capability.");
             eprintln!("   Keeper may fail to start without elevated privileges.");
             eprintln!("   ");
             eprintln!("   To fix, run:");
             eprintln!("     sudo setcap cap_ipc_lock+ep $(which keeper)");
             eprintln!();
+        } else if cfg!(target_os = "macos") {
+            eprintln!("ℹ️  NOTE: macOS does not support CAP_IPC_LOCK.");
+            eprintln!("   If Keeper fails to lock memory, increase max locked memory limits:");
+            eprintln!("     sudo launchctl limit memlock unlimited unlimited");
+            eprintln!("     ulimit -l unlimited");
+            eprintln!();
         }
     }
 }
+
+#[cfg(unix)]
+fn memlock_limits() -> Option<(u64, u64)> {
+    unsafe {
+        let mut limits = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut limits) == 0 {
+            Some((limits.rlim_cur, limits.rlim_max))
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn memlock_limits() -> Option<(u64, u64)> {
+    None
+}
+
+fn format_limit_bytes(value: u64) -> String {
+    #[cfg(unix)]
+    {
+        if value == libc::RLIM_INFINITY {
+            return "unlimited".to_string();
+        }
+    }
+
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut size = value as f64;
+    let mut unit_index = 0usize;
+    while size >= 1024.0 && unit_index + 1 < UNITS.len() {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{value} B")
+    } else {
+        format!("{:.1} {}", size, UNITS[unit_index])
+    }
+}
+
+#[cfg(unix)]
+fn check_memlock_limit() {
+    if let Some((cur, max)) = memlock_limits() {
+        if cur == 0 {
+            eprintln!("⚠️  NOTE: Max locked memory (ulimit -l) is 0.");
+            eprintln!("   Keeper cannot lock memory and will refuse to start.");
+            eprintln!("   ");
+            if cfg!(target_os = "macos") {
+                eprintln!("   Fix (macOS):");
+                eprintln!("     sudo launchctl limit memlock unlimited unlimited");
+                eprintln!("     ulimit -l unlimited");
+            } else if cfg!(target_os = "linux") {
+                eprintln!("   Fix (Linux):");
+                eprintln!("     sudo setcap cap_ipc_lock+ep $(which keeper)");
+                eprintln!("     # or increase ulimit -l in your shell/profile");
+            } else {
+                eprintln!("   Fix: increase ulimit -l in your shell/profile");
+            }
+            eprintln!("   ");
+            eprintln!("   Insecure override (NOT recommended):");
+            eprintln!("     KEEPER_ALLOW_INSECURE_MEMLOCK=1");
+            eprintln!();
+        } else if cfg!(target_os = "macos") && cur != max {
+            eprintln!(
+                "ℹ️  NOTE: Max locked memory (ulimit -l) is {} (max {}).",
+                format_limit_bytes(cur),
+                format_limit_bytes(max)
+            );
+            eprintln!("   If Keeper fails to lock memory, raise limits:");
+            eprintln!("     sudo launchctl limit memlock unlimited unlimited");
+            eprintln!("     ulimit -l unlimited");
+            eprintln!();
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn check_memlock_limit() {}
 
 fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()> {
     // Pre-flight security checks
@@ -195,6 +291,104 @@ fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()
         paths.socket_path_display()
     );
 
+    Ok(())
+}
+
+fn cmd_doctor(paths: &KeeperPaths, fix: bool) -> Result<()> {
+    println!("Keeper Doctor");
+    println!("OS: {}", std::env::consts::OS);
+
+    if let Some((cur, max)) = memlock_limits() {
+        println!(
+            "Max locked memory: current={}, max={}",
+            format_limit_bytes(cur),
+            format_limit_bytes(max)
+        );
+    } else {
+        println!("Max locked memory: unavailable");
+    }
+
+    #[cfg(unix)]
+    {
+        if cfg!(target_os = "linux") {
+            let has_cap = has_ipc_lock_capability();
+            println!(
+                "CAP_IPC_LOCK: {}",
+                if has_cap { "present" } else { "missing" }
+            );
+            if !has_cap {
+                println!("Fix (Linux): sudo setcap cap_ipc_lock+ep $(which keeper)");
+                println!("Alt: increase ulimit -l in your shell/profile");
+            }
+            if fix && !has_cap {
+                run_doctor_fix_linux()?;
+            }
+        } else if cfg!(target_os = "macos") {
+            println!("Fix (macOS): sudo launchctl limit memlock unlimited unlimited");
+            println!("Then: ulimit -l unlimited (new shell)");
+            if fix {
+                run_doctor_fix_macos()?;
+            }
+        } else {
+            println!("Fix: increase ulimit -l in your shell/profile");
+        }
+    }
+
+    println!("Insecure override (NOT recommended):");
+    println!("  Env: KEEPER_ALLOW_INSECURE_MEMLOCK=1");
+    println!(
+        "  Config: set allow_insecure_memlock=true in {}",
+        paths.config_path.display()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn run_doctor_fix_macos() -> Result<()> {
+    use std::process::Command;
+
+    println!("Attempting to set memlock limit via launchctl (sudo required)...");
+    let status = Command::new("sudo")
+        .arg("launchctl")
+        .arg("limit")
+        .arg("memlock")
+        .arg("unlimited")
+        .arg("unlimited")
+        .status()
+        .context("Failed to run launchctl via sudo")?;
+    if !status.success() {
+        return Err(anyhow!("launchctl command failed"));
+    }
+    println!("Memlock limit updated. Open a new terminal and run: ulimit -l unlimited");
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_doctor_fix_macos() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn run_doctor_fix_linux() -> Result<()> {
+    use std::process::Command;
+
+    let exe = std::env::current_exe().context("Unable to locate keeper binary")?;
+    println!("Attempting to grant CAP_IPC_LOCK via setcap (sudo required)...");
+    let status = Command::new("sudo")
+        .arg("setcap")
+        .arg("cap_ipc_lock+ep")
+        .arg(exe)
+        .status()
+        .context("Failed to run setcap via sudo")?;
+    if !status.success() {
+        return Err(anyhow!("setcap command failed"));
+    }
+    println!("CAP_IPC_LOCK granted. You can now run keeper without sudo.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_doctor_fix_linux() -> Result<()> {
     Ok(())
 }
 
