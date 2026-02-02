@@ -633,7 +633,8 @@ fn load_buckets(paths: &KeeperPaths) -> Vec<String> {
 }
 
 fn clear_screen() {
-    print!("\u{001b}[2J\u{001b}[H");
+    // Clear screen and scrollback for terminals that support it.
+    print!("\u{001b}[2J\u{001b}[3J\u{001b}[H");
     let _ = std::io::stdout().flush();
 }
 
@@ -1372,12 +1373,14 @@ fn build_date_candidates() -> Vec<String> {
 }
 
 fn render_dashboard(paths: &KeeperPaths) -> Result<()> {
-    let ascii = r#"  _  __                             
- | |/ /___ ___ _ __   ___ _ __  
- |   // _ \ _ \ '_ \ / _ \ '__|     v0.1.0
- |_|\_\___|\___| .__/ \___|_|    ⚡ Daemon Connected
-               |_|
-"#;
+    let version = env!("CARGO_PKG_VERSION");
+    let ascii = format!(
+        "  _  __                             \n\
+ | |/ /___ ___ _ __   ___ _ __  \n\
+ |   // _ \\ _ \\ '_ \\ / _ \\ '__|     v{version}\n\
+ |_|\\_\\___|\\___| .__/ \\___|_|    ⚡ Daemon Connected\n\
+               |_|\n"
+    );
     println!("{ascii}");
 
     let urgent = fetch_urgent(paths)?;
