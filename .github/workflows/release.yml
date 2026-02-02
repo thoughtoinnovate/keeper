@@ -69,7 +69,10 @@ jobs:
     needs: build-assets
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@v4
       - name: Install minisign
         run: |
           sudo apt-get update
@@ -78,7 +81,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download "${{ github.ref_name }}"
+          gh release download "${{ github.ref_name }}" --repo "${GH_REPO}"
       - name: Generate minisig files
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -105,4 +108,4 @@ jobs:
             echo "No minisig files generated"
             exit 1
           fi
-          gh release upload "${{ github.ref_name }}" "${minisigs[@]}" --clobber
+          gh release upload "${{ github.ref_name }}" "${minisigs[@]}" --clobber --repo "${GH_REPO}"
