@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "keeper"
-version = "0.3.8"
+version = "0.3.10"
 dependencies = [
  "anyhow",
  "argon2",

@@ -556,9 +556,13 @@ fn cmd_update(paths: &KeeperPaths, args: cli::UpdateArgs) -> Result<()> {
         if !args.skip_migration_check {
             let manager = MigrationManager::new(paths.clone())?;
             let current_version = env!("CARGO_PKG_VERSION");
-            let target_version = args.tag.as_deref().unwrap_or("latest");
+            let target_version = match args.tag.as_deref() {
+                Some(tag) => self_update::tag_to_version(tag)?,
+                None => self_update::resolve_latest_version()
+                    .context("Failed to resolve latest version")?,
+            };
 
-            match manager.check_migration_needed(current_version, target_version)? {
+            match manager.check_migration_needed(current_version, &target_version)? {
                 MigrationStatus::NoActionRequired => {
                     // Safe to proceed
                 }
@@ -1011,13 +1015,14 @@ fn cmd_migrate(paths: &KeeperPaths, args: cli::MigrateArgs) -> Result<()> {
 fn cmd_migrate_check(paths: &KeeperPaths) -> Result<()> {
     let manager = MigrationManager::new(paths.clone())?;
     let current_version = env!("CARGO_PKG_VERSION");
-    let target_version = "latest"; // In production, this would be fetched
+    let target_version =
+        self_update::resolve_latest_version().context("Failed to resolve latest version")?;
 
     println!("Checking migration status...");
     println!("  Current version: {}", current_version);
     println!("  Target version: {}", target_version);
 
-    match manager.check_migration_needed(current_version, target_version)? {
+    match manager.check_migration_needed(current_version, &target_version)? {
         MigrationStatus::NoActionRequired => {
             println!("✅ No migration needed - safe to update");
             Ok(())
@@ -1025,7 +1030,7 @@ fn cmd_migrate_check(paths: &KeeperPaths) -> Result<()> {
         MigrationStatus::MigrationRequired(req) => {
             println!("⚠️  Migration required for update");
             println!("  Type: {:?}", req.migration_type);
-            let changes = manager.get_breaking_changes(current_version, target_version)?;
+            let changes = manager.get_breaking_changes(current_version, &target_version)?;
             if !changes.is_empty() {
                 println!("\nBreaking changes:");
                 for change in changes {
@@ -1056,14 +1061,16 @@ fn cmd_migrate_backup(paths: &KeeperPaths, output: PathBuf) -> Result<()> {
 
     let manager = MigrationManager::new(paths.clone())?;
     let current_version = env!("CARGO_PKG_VERSION");
-    let target_version = "latest";
+    let target_version =
+        self_update::resolve_latest_version().context("Failed to resolve latest version")?;
 
     println!("Creating pre-update backup...");
 
     let mut password = prompt::prompt_password()?;
     let secure_pass = SecurePassword::new(password.as_bytes().to_vec());
 
-    let backup = manager.create_pre_update_backup(current_version, target_version, &secure_pass)?;
+    let backup =
+        manager.create_pre_update_backup(current_version, &target_version, &secure_pass)?;
 
     password.zeroize();
 

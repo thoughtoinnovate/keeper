@@ -124,6 +124,22 @@ fn fetch_latest_release() -> Result<GitHubRelease> {
     Ok(release)
 }
 
+/// Resolve latest release tag to a version string (e.g., "v0.3.9" -> "0.3.9")
+pub fn resolve_latest_version() -> Result<String> {
+    let release = fetch_latest_release()?;
+    let version = release.tag_name.trim_start_matches('v').to_string();
+    if version.is_empty() {
+        return Err(anyhow!("Latest release tag is empty"));
+    }
+    Ok(version)
+}
+
+/// Normalize a tag and return the version string without leading 'v'.
+pub fn tag_to_version(tag: &str) -> Result<String> {
+    let normalized = normalize_tag(tag)?;
+    Ok(normalized.trim_start_matches('v').to_string())
+}
+
 /// Compare two semantic version strings (e.g., "0.3.7" vs "0.3.8")
 fn compare_versions(current: &str, latest: &str) -> Result<Ordering> {
     let current_parts: Vec<u32> = current
