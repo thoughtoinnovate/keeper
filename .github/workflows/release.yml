@@ -59,3 +59,45 @@ jobs:
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
           include: LICENSE,README.md
+
+  sign-assets:
+    name: Sign release assets
+    needs: build-assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ github.ref_name }}"
+      - name: Generate minisig files
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "${MINISIGN_SECRET_KEY}" ]; then
+            echo "MINISIGN_SECRET_KEY is not set"
+            exit 1
+          fi
+          key_file="$(mktemp)"
+          printf "%s" "${MINISIGN_SECRET_KEY}" > "${key_file}"
+          chmod 600 "${key_file}"
+          shopt -s nullglob
+          for asset in keeper-*.tar.gz keeper-*.zip; do
+            minisign -Sm -s "${key_file}" -m "${asset}"
+          done
+          rm -f "${key_file}"
+      - name: Upload minisig files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          minisigs=( *.minisig )
+          if [ ${#minisigs[@]} -eq 0 ]; then
+            echo "No minisig files generated"
+            exit 1
+          fi
+          gh release upload "${{ github.ref_name }}" "${minisigs[@]}" --clobber
