@@ -1015,11 +1015,16 @@ fn cmd_migrate(paths: &KeeperPaths, args: cli::MigrateArgs) -> Result<()> {
 fn cmd_migrate_check(paths: &KeeperPaths) -> Result<()> {
     let manager = MigrationManager::new(paths.clone())?;
     let current_version = env!("CARGO_PKG_VERSION");
-    let target_version =
-        self_update::resolve_latest_version().context("Failed to resolve latest version")?;
 
     println!("Checking migration status...");
     println!("  Current version: {}", current_version);
+    let target_version = match self_update::resolve_latest_version() {
+        Ok(version) => version,
+        Err(err) => {
+            eprintln!("⚠️  Could not resolve latest version: {err}");
+            current_version.to_string()
+        }
+    };
     println!("  Target version: {}", target_version);
 
     match manager.check_migration_needed(current_version, &target_version)? {
