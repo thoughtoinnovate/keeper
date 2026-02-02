@@ -54,6 +54,16 @@ pub fn run_daemon(
         }
 
         unsafe {
+            let mut limits = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut limits) == 0 {
+                logger::debug(&format!(
+                    "Memlock limits: cur={}, max={}",
+                    limits.rlim_cur, limits.rlim_max
+                ));
+            }
             if !test_mode {
                 if mlockall(MCL_CURRENT | MCL_FUTURE) != 0 {
                     if allow_insecure_memlock {
@@ -61,15 +71,17 @@ pub fn run_daemon(
                             "Insecure mode: failed to lock memory; continuing without mlockall()",
                         );
                     } else if cfg!(target_os = "macos") {
+                        let err = std::io::Error::last_os_error();
                         return Err(anyhow::anyhow!(
-                            "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
-                             Increase max locked memory limits (launchctl limit) and ulimit -l. \
-                             Exiting for security."
+                            "CRITICAL: Failed to lock memory ({err}). Keys would be swapped to \
+                             disk. Increase max locked memory limits (launchctl limit) and \
+                             ulimit -l. Exiting for security."
                         ));
                     } else {
+                        let err = std::io::Error::last_os_error();
                         return Err(anyhow::anyhow!(
-                            "CRITICAL: Failed to lock memory. Keys would be swapped to disk. \
-                             Increase ulimit -l or run with CAP_IPC_LOCK permission. \
+                            "CRITICAL: Failed to lock memory ({err}). Keys would be swapped to \
+                             disk. Increase ulimit -l or run with CAP_IPC_LOCK permission. \
                              Exiting for security."
                         ));
                     }
