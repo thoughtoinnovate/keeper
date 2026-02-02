@@ -67,6 +67,7 @@ jobs:
   sign-assets:
     name: Sign release assets
     needs: build-assets
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Install minisign
