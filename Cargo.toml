@@ -1,6 +1,6 @@
 [package]
 name = "keeper"
-version = "0.3.28"
+version = "0.3.29"
 edition = "2024"
 
   [dependencies]
@@ -11,7 +11,6 @@ edition = "2024"
  reedline = "0.24"
  tabled = "0.14"
  # Daemon & IPC
- daemonize = "0.5"
  interprocess = "1.2" # Or tokio::net::UnixStream
  # Database (Crucial: bundled-sqlcipher)
  # Security
@@ -44,6 +43,7 @@ edition = "2024"
  directories = "5.0" # For finding home dir correctly across OS
 
 [target.'cfg(unix)'.dependencies]
+daemonize = "0.5"
 libc = "0.2"
 nix = { version = "0.31", features = ["socket", "user"] }
 
