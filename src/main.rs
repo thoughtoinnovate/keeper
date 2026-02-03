@@ -246,13 +246,34 @@ fn cmd_start(paths: &KeeperPaths, debug: bool, show_recovery: bool) -> Result<()
     // Pre-flight security checks
     check_security_prerequisites();
 
+    if paths.socket_path.exists() && !client::daemon_running(paths) {
+        logger::debug("Stale daemon socket detected; removing");
+        paths.remove_socket_if_exists();
+    }
+
     if client::daemon_running(paths) {
-        println!(
-            "✅ Daemon already running. Vault: {}. Socket: {}",
-            paths.db_path.display(),
-            paths.socket_path_display()
-        );
-        return Ok(());
+        println!("ℹ️  Daemon already running. Attempting to stop it...");
+        if let Err(err) = client::send_request(paths, &DaemonRequest::Shutdown) {
+            logger::warn(&format!("Failed to stop daemon: {err}"));
+        }
+
+        #[cfg(unix)]
+        {
+            use std::thread;
+            use std::time::{Duration, Instant};
+            let deadline = Instant::now() + Duration::from_millis(2000);
+            while Instant::now() < deadline {
+                if !paths.socket_path.exists() || !client::daemon_running(paths) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    if client::daemon_running(paths) {
+        return Err(anyhow!(
+            "Daemon is still running. Stop it first with `keeper stop` and retry."
+        ));
     }
 
     let outcome = session::unlock_or_init_master_key(paths)?;
