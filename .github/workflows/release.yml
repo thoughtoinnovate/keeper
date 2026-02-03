@@ -122,13 +122,7 @@ jobs:
           chmod 600 "${key_file}"
           if [ -n "${MINISIGN_PASSWORD}" ]; then
             if [ "${RUNNER_OS}" = "macOS" ] && command -v expect >/dev/null 2>&1; then
-              env key_file="${key_file}" archive="${archive}" MINISIGN_PASSWORD="${MINISIGN_PASSWORD}" expect <<'EOF'
-              log_user 0
-              spawn minisign -Sm -s "$env(key_file)" -m "$env(archive)"
-              expect "Password:"
-              send "$env(MINISIGN_PASSWORD)\r"
-              expect eof
-EOF
+              expect -c 'log_user 0; spawn minisign -Sm -s "'"${key_file}"'" -m "'"${archive}"'"; expect "Password:"; send "'"${MINISIGN_PASSWORD}"'\r"; expect eof'
             else
               printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${archive}"
             fi
