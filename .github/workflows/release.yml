@@ -77,6 +77,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
           GH_REPO: ${{ github.repository }}
         run: |
           if [ -z "${MINISIGN_SECRET_KEY}" ]; then
@@ -119,7 +120,11 @@ jobs:
             exit 1
           fi
           chmod 600 "${key_file}"
-          minisign -Sm -s "${key_file}" -m "${archive}"
+          if [ -n "${MINISIGN_PASSWORD}" ]; then
+            printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${archive}"
+          else
+            minisign -Sm -s "${key_file}" -m "${archive}"
+          fi
           if command -v shred >/dev/null 2>&1; then
             shred -u "${key_file}"
           else
@@ -148,6 +153,7 @@ jobs:
       - name: Generate minisig files
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
           if [ -z "${MINISIGN_SECRET_KEY}" ]; then
             echo "MINISIGN_SECRET_KEY is not set"
@@ -185,7 +191,11 @@ jobs:
           chmod 600 "${key_file}"
           shopt -s nullglob
           for asset in keeper-*.tar.gz keeper-*.zip; do
-            minisign -Sm -s "${key_file}" -m "${asset}"
+            if [ -n "${MINISIGN_PASSWORD}" ]; then
+              printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${asset}"
+            else
+              minisign -Sm -s "${key_file}" -m "${asset}"
+            fi
           done
           if command -v shred >/dev/null 2>&1; then
             shred -u "${key_file}"
