@@ -120,14 +120,15 @@ jobs:
             exit 1
           fi
           chmod 600 "${key_file}"
-          if [ -n "${MINISIGN_PASSWORD}" ]; then
-            if [ "${RUNNER_OS}" = "macOS" ] && command -v expect >/dev/null 2>&1; then
-              expect -c 'log_user 1; spawn minisign -Sm -s "'"${key_file}"'" -m "'"${archive}"'"; expect { -re "Password:" { send -- "'"${MINISIGN_PASSWORD}"'\r"; exp_continue } eof }; catch wait result; exit [lindex $result 3]'
-            else
-              printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${archive}"
-            fi
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            pass="${MINISIGN_PASSWORD:-}"
+            printf "%s" "${pass}" | script -q /dev/null minisign -Sm -s "${key_file}" -m "${archive}"
           else
-            minisign -Sm -s "${key_file}" -m "${archive}"
+            if [ -n "${MINISIGN_PASSWORD}" ]; then
+              printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${archive}"
+            else
+              minisign -Sm -s "${key_file}" -m "${archive}"
+            fi
           fi
           if [ ! -f "${archive}.minisig" ]; then
             echo "Minisign output not found: ${archive}.minisig"
