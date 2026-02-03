@@ -120,15 +120,11 @@ jobs:
             exit 1
           fi
           chmod 600 "${key_file}"
+          pass="${MINISIGN_PASSWORD:-}"
           if [ "${RUNNER_OS}" = "macOS" ]; then
-            pass="${MINISIGN_PASSWORD:-}"
-            printf "%s" "${pass}" | script -q /dev/null minisign -Sm -s "${key_file}" -m "${archive}"
+            printf "%s\n" "${pass}" | script -q /dev/null minisign -Sm -s "${key_file}" -m "${archive}"
           else
-            if [ -n "${MINISIGN_PASSWORD}" ]; then
-              printf "%s" "${MINISIGN_PASSWORD}" | minisign -Sm -s "${key_file}" -m "${archive}"
-            else
-              minisign -Sm -s "${key_file}" -m "${archive}"
-            fi
+            printf "%s\n" "${pass}" | minisign -Sm -s "${key_file}" -m "${archive}"
           fi
           if [ ! -f "${archive}.minisig" ]; then
             echo "Minisign output not found: ${archive}.minisig"
