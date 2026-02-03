@@ -123,9 +123,9 @@ jobs:
           pass="${MINISIGN_PASSWORD:-}"
           if [ "${RUNNER_OS}" = "macOS" ] && command -v expect >/dev/null 2>&1; then
             KEY_FILE="${key_file}" ARCHIVE="${archive}" MINISIGN_PASSWORD="${pass}" \
-              expect -c 'log_user 1; set timeout 120; spawn minisign -Sm -s $env(KEY_FILE) -m $env(ARCHIVE); send -- "$env(MINISIGN_PASSWORD)\r"; expect { -re "(?i)passphrase|password" { send -- "$env(MINISIGN_PASSWORD)\r"; exp_continue } timeout { puts "Timed out waiting for minisign password prompt"; exit 124 } eof }; catch wait result; exit [lindex $result 3]'
+              expect -c 'log_user 1; set timeout 60; spawn minisign -S -s $env(KEY_FILE) -m $env(ARCHIVE); expect -re "(?i)passphrase|password"; send -- "$env(MINISIGN_PASSWORD)\r"; expect eof'
           else
-            printf "%s\n" "${pass}" | minisign -Sm -s "${key_file}" -m "${archive}"
+            printf "%s\n" "${pass}" | minisign -S -s "${key_file}" -m "${archive}"
           fi
           if [ ! -f "${archive}.minisig" ]; then
             echo "Minisign output not found: ${archive}.minisig"
